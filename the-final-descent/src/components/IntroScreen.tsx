@@ -11,9 +11,8 @@ interface Star {
   brightness: number;
   twinkleSpeed: number;
   twinklePhase: number;
-  falling?: boolean;
-  fallSpeed?: number;
   pulledByMeteor?: boolean;
+  shouldBePulled?: boolean;
 }
 
 interface Particle {
@@ -27,14 +26,16 @@ interface Particle {
   color: { r: number; g: number; b: number };
 }
 
-interface VoidBeam {
+interface GlassFragment {
   x: number;
   y: number;
-  angle: number;
-  length: number;
-  growth: number;
+  points: Array<{ x: number; y: number }>;
+  velocity: { x: number; y: number };
+  rotation: number;
+  rotationSpeed: number;
+  alpha: number;
+  glowIntensity: number;
   pulsePhase: number;
-  branches: Array<{ offset: number; angle: number; length: number }>;
 }
 
 interface BackgroundMeteor {
@@ -60,14 +61,16 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
   const [showTitle, setShowTitle] = useState(false);
   const [showButton, setShowButton] = useState(false);
   const [buttonHover, setButtonHover] = useState(false);
+  const [titleGlitch, setTitleGlitch] = useState({ active: false, intensity: 0 });
   const buttonHoverRef = useRef(false);
 
   const animationRef = useRef<number | undefined>(undefined);
   const starsRef = useRef<Star[]>([]);
   const particlesRef = useRef<Particle[]>([]);
-  const beamsRef = useRef<VoidBeam[]>([]);
+  const glassFragmentsRef = useRef<GlassFragment[]>([]);
   const backgroundMeteorsRef = useRef<BackgroundMeteor[]>([]);
   const energySparksRef = useRef<EnergySpark[]>([]);
+  const meteorSpawnIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const meteorRef = useRef<{ x: number; y: number; active: boolean }>({
     x: 0,
@@ -78,7 +81,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
   const phaseRef = useRef<'starfield' | 'meteor' | 'impact' | 'crater' | 'complete'>('starfield');
   const timeRef = useRef(0);
   const impactTimeRef = useRef(0);
-  const glitchRef = useRef({ active: false, intensity: 0, nextGlitch: 0 });
+  const nextGlitchRef = useRef(0);
 
   useEffect(() => {
     buttonHoverRef.current = buttonHover;
@@ -98,17 +101,18 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
     resize();
     window.addEventListener('resize', resize);
 
-    // Initialize stars with better distribution
+    // Initialize stars across ENTIRE screen
     const initStars = () => {
       const stars: Star[] = [];
-      for (let i = 0; i < 300; i++) {
+      for (let i = 0; i < 400; i++) {
         stars.push({
           x: Math.random() * canvas.width,
-          y: Math.random() * canvas.height,
+          y: Math.random() * canvas.height, // Full height coverage
           size: Math.random() * 2.5 + 0.5,
           brightness: Math.random() * 0.6 + 0.4,
           twinkleSpeed: Math.random() * 0.03 + 0.01,
           twinklePhase: Math.random() * Math.PI * 2,
+          shouldBePulled: Math.random() < 0.3, // Only 30% can be pulled
         });
       }
       starsRef.current = stars;
@@ -162,63 +166,88 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       particlesRef.current = particles;
     };
 
-    // Create void beams with branches
-    const createVoidBeams = (x: number, y: number) => {
-      const beams: VoidBeam[] = [];
-      const beamCount = 16;
+    // Create shattered glass/reality effect
+    const createShatteredReality = (x: number, y: number) => {
+      const fragments: GlassFragment[] = [];
+      const fragmentCount = 40;
 
-      for (let i = 0; i < beamCount; i++) {
-        const mainAngle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.2;
-        const beam: VoidBeam = {
-          x,
-          y,
-          angle: mainAngle,
-          length: 0,
-          growth: Math.random() * 4 + 3,
-          pulsePhase: Math.random() * Math.PI * 2,
-          branches: [],
-        };
+      for (let i = 0; i < fragmentCount; i++) {
+        const angle = (Math.PI / 2) * (i / fragmentCount) - (Math.PI / 4);
+        const distance = Math.random() * 150 + 100;
 
-        // Add branches to each beam
-        const branchCount = Math.floor(Math.random() * 3) + 2;
-        for (let j = 0; j < branchCount; j++) {
-          beam.branches.push({
-            offset: Math.random() * 0.7 + 0.3,
-            angle: (Math.random() - 0.5) * Math.PI * 0.5,
-            length: Math.random() * 100 + 50,
+        const centerX = x + Math.cos(angle) * distance;
+        const centerY = y + Math.sin(angle) * distance;
+
+        // Create irregular polygon (glass shard)
+        const points: Array<{ x: number; y: number }> = [];
+        const sides = Math.floor(Math.random() * 3) + 4; // 4-6 sides
+        const size = Math.random() * 40 + 30;
+
+        for (let j = 0; j < sides; j++) {
+          const a = (Math.PI * 2 * j) / sides + Math.random() * 0.5;
+          const r = size * (0.5 + Math.random() * 0.5);
+          points.push({
+            x: Math.cos(a) * r,
+            y: Math.sin(a) * r,
           });
         }
 
-        beams.push(beam);
+        fragments.push({
+          x: centerX,
+          y: centerY,
+          points,
+          velocity: {
+            x: (Math.random() - 0.5) * 0.3,
+            y: (Math.random() - 0.5) * 0.3,
+          },
+          rotation: Math.random() * Math.PI * 2,
+          rotationSpeed: (Math.random() - 0.5) * 0.02,
+          alpha: 0.7,
+          glowIntensity: Math.random() * 0.5 + 0.5,
+          pulsePhase: Math.random() * Math.PI * 2,
+        });
       }
 
-      beamsRef.current = beams;
+      glassFragmentsRef.current = fragments;
     };
 
-    // Spawn background meteor
+    // Spawn background meteor - MUCH LARGER AND FASTER
     const spawnBackgroundMeteor = () => {
       if (phaseRef.current !== 'crater' && phaseRef.current !== 'complete') return;
 
       const side = Math.random();
       let x, y, vx, vy;
 
-      if (side < 0.5) {
-        // From left
-        x = -50;
-        y = Math.random() * canvas.height * 0.5;
-        vx = Math.random() * 3 + 2;
-        vy = Math.random() * 4 + 3;
+      if (side < 0.33) {
+        // From top left
+        x = Math.random() * canvas.width * 0.3;
+        y = -50;
+        vx = Math.random() * 4 + 3;
+        vy = Math.random() * 8 + 6;
+      } else if (side < 0.66) {
+        // From top right
+        x = canvas.width - Math.random() * canvas.width * 0.3;
+        y = -50;
+        vx = -(Math.random() * 4 + 3);
+        vy = Math.random() * 8 + 6;
       } else {
-        // From right
-        x = canvas.width + 50;
-        y = Math.random() * canvas.height * 0.5;
-        vx = -(Math.random() * 3 + 2);
-        vy = Math.random() * 4 + 3;
+        // Diagonal across screen
+        if (Math.random() < 0.5) {
+          x = -50;
+          y = Math.random() * canvas.height * 0.3;
+          vx = Math.random() * 6 + 5;
+          vy = Math.random() * 6 + 4;
+        } else {
+          x = canvas.width + 50;
+          y = Math.random() * canvas.height * 0.3;
+          vx = -(Math.random() * 6 + 5);
+          vy = Math.random() * 6 + 4;
+        }
       }
 
       backgroundMeteorsRef.current.push({
         x, y, vx, vy,
-        size: Math.random() * 3 + 2,
+        size: Math.random() * 8 + 10, // Much larger: 10-18px
         life: 1,
         burnProgress: 0,
       });
@@ -226,15 +255,15 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
 
     // Create energy sparks for title
     const createEnergySparks = (titleX: number, titleY: number) => {
-      if (Math.random() < 0.1) {
-        const sparkCount = Math.floor(Math.random() * 3) + 1;
+      if (Math.random() < 0.15) {
+        const sparkCount = Math.floor(Math.random() * 5) + 2;
         for (let i = 0; i < sparkCount; i++) {
           energySparksRef.current.push({
-            x: titleX + (Math.random() - 0.5) * 600,
-            y: titleY + (Math.random() - 0.5) * 80,
-            vx: (Math.random() - 0.5) * 4,
-            vy: (Math.random() - 0.5) * 4,
-            life: Math.random() * 0.5 + 0.5,
+            x: titleX + (Math.random() - 0.5) * 700,
+            y: titleY + (Math.random() - 0.5) * 100,
+            vx: (Math.random() - 0.5) * 6,
+            vy: (Math.random() - 0.5) * 6,
+            life: Math.random() * 0.7 + 0.5,
           });
         }
       }
@@ -268,13 +297,13 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         const twinkle = Math.sin(star.twinklePhase) * 0.3 + 0.7;
         const alpha = Math.min(1.0, star.brightness * twinkle);
 
-        // Pull stars toward meteor
-        if (phaseRef.current === 'meteor' && meteorRef.current.active) {
+        // Pull SOME stars toward meteor (only those marked shouldBePulled)
+        if (phaseRef.current === 'meteor' && meteorRef.current.active && star.shouldBePulled) {
           const dx = star.x - meteorRef.current.x;
           const dy = star.y - meteorRef.current.y;
           const distance = Math.sqrt(dx * dx + dy * dy);
 
-          if (distance < 200 && star.y < meteorRef.current.y) {
+          if (distance < 200 && star.y < meteorRef.current.y && !star.pulledByMeteor) {
             star.pulledByMeteor = true;
           }
         }
@@ -357,19 +386,19 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           impactTimeRef.current = timeRef.current;
 
           createExplosion(canvas.width / 2, canvas.height);
-          createVoidBeams(canvas.width / 2, canvas.height);
+          createShatteredReality(canvas.width / 2, canvas.height);
 
           setTimeout(() => {
             setShowTitle(true);
-            glitchRef.current.nextGlitch = timeRef.current + Math.random() * 2 + 0.5;
+            nextGlitchRef.current = timeRef.current + Math.random() * 2 + 0.5;
           }, 1500);
 
           setTimeout(() => setShowButton(true), 3000);
 
-          // Start spawning background meteors
-          setInterval(() => {
-            if (Math.random() < 0.3) spawnBackgroundMeteor();
-          }, 2000);
+          // Start spawning background meteors - more frequently
+          meteorSpawnIntervalRef.current = setInterval(() => {
+            if (Math.random() < 0.7) spawnBackgroundMeteor();
+          }, 1500);
         }
       }
 
@@ -446,70 +475,70 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         }
       }
 
-      // Draw void beams with energy
+      // Draw shattered glass/reality effect
       if (phaseRef.current === 'crater' || phaseRef.current === 'complete') {
-        beamsRef.current.forEach(beam => {
-          if (beam.length < 400) {
-            beam.length += beam.growth;
-          }
-          beam.pulsePhase += 0.05;
-          const pulse = Math.sin(beam.pulsePhase) * 0.3 + 0.7;
+        glassFragmentsRef.current.forEach(fragment => {
+          fragment.x += fragment.velocity.x;
+          fragment.y += fragment.velocity.y;
+          fragment.rotation += fragment.rotationSpeed;
+          fragment.pulsePhase += 0.03;
 
-          // Main beam
-          const endX = beam.x + Math.cos(beam.angle) * beam.length;
-          const endY = beam.y + Math.sin(beam.angle) * beam.length;
+          const pulse = Math.sin(fragment.pulsePhase) * 0.3 + 0.7;
+
+          ctx.save();
+          ctx.translate(fragment.x, fragment.y);
+          ctx.rotate(fragment.rotation);
+
+          // Draw glass fragment with multiple layers
 
           // Outer glow
-          const glowGradient = ctx.createLinearGradient(beam.x, beam.y, endX, endY);
-          glowGradient.addColorStop(0, `rgba(120, 60, 180, ${0.6 * pulse})`);
-          glowGradient.addColorStop(0.5, `rgba(150, 80, 200, ${0.4 * pulse})`);
-          glowGradient.addColorStop(1, 'rgba(100, 50, 150, 0)');
-          ctx.strokeStyle = glowGradient;
-          ctx.lineWidth = 8;
-          ctx.lineCap = 'round';
+          ctx.strokeStyle = `rgba(120, 80, 200, ${fragment.alpha * 0.4 * pulse})`;
+          ctx.lineWidth = 6;
+          ctx.lineJoin = 'miter';
           ctx.beginPath();
-          ctx.moveTo(beam.x, beam.y);
-          ctx.lineTo(endX, endY);
+          fragment.points.forEach((point, i) => {
+            if (i === 0) ctx.moveTo(point.x, point.y);
+            else ctx.lineTo(point.x, point.y);
+          });
+          ctx.closePath();
           ctx.stroke();
 
-          // Inner bright line
-          const brightGradient = ctx.createLinearGradient(beam.x, beam.y, endX, endY);
-          brightGradient.addColorStop(0, `rgba(200, 150, 255, ${0.9 * pulse})`);
-          brightGradient.addColorStop(0.7, `rgba(150, 100, 220, ${0.6 * pulse})`);
-          brightGradient.addColorStop(1, 'rgba(120, 80, 180, 0)');
-          ctx.strokeStyle = brightGradient;
+          // Middle layer - brighter
+          ctx.strokeStyle = `rgba(180, 120, 255, ${fragment.alpha * 0.6 * pulse * fragment.glowIntensity})`;
           ctx.lineWidth = 3;
           ctx.beginPath();
-          ctx.moveTo(beam.x, beam.y);
-          ctx.lineTo(endX, endY);
+          fragment.points.forEach((point, i) => {
+            if (i === 0) ctx.moveTo(point.x, point.y);
+            else ctx.lineTo(point.x, point.y);
+          });
+          ctx.closePath();
           ctx.stroke();
 
-          // Core line
-          ctx.strokeStyle = `rgba(255, 255, 255, ${0.7 * pulse})`;
+          // Core white line
+          ctx.strokeStyle = `rgba(255, 255, 255, ${fragment.alpha * 0.8 * pulse})`;
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.moveTo(beam.x, beam.y);
-          ctx.lineTo(endX, endY);
+          fragment.points.forEach((point, i) => {
+            if (i === 0) ctx.moveTo(point.x, point.y);
+            else ctx.lineTo(point.x, point.y);
+          });
+          ctx.closePath();
           ctx.stroke();
 
-          // Draw branches
-          beam.branches.forEach(branch => {
-            const branchStartX = beam.x + Math.cos(beam.angle) * beam.length * branch.offset;
-            const branchStartY = beam.y + Math.sin(beam.angle) * beam.length * branch.offset;
-            const branchAngle = beam.angle + branch.angle;
-            const branchEndX = branchStartX + Math.cos(branchAngle) * branch.length;
-            const branchEndY = branchStartY + Math.sin(branchAngle) * branch.length;
-
-            const branchGradient = ctx.createLinearGradient(branchStartX, branchStartY, branchEndX, branchEndY);
-            branchGradient.addColorStop(0, `rgba(150, 80, 200, ${0.5 * pulse})`);
-            branchGradient.addColorStop(1, 'rgba(100, 50, 150, 0)');
-            ctx.strokeStyle = branchGradient;
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.moveTo(branchStartX, branchStartY);
-            ctx.lineTo(branchEndX, branchEndY);
-            ctx.stroke();
+          // Fill with semi-transparent purple void
+          const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 50);
+          gradient.addColorStop(0, `rgba(100, 50, 150, ${fragment.alpha * 0.15 * pulse})`);
+          gradient.addColorStop(1, `rgba(80, 40, 120, ${fragment.alpha * 0.05 * pulse})`);
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          fragment.points.forEach((point, i) => {
+            if (i === 0) ctx.moveTo(point.x, point.y);
+            else ctx.lineTo(point.x, point.y);
           });
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.restore();
         });
 
         // Crater glow with pulsing
@@ -529,31 +558,43 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         ctx.fillRect(0, canvas.height - 300, canvas.width, 300);
       }
 
-      // Background meteors
+      // Background meteors - MUCH MORE VISIBLE
       backgroundMeteorsRef.current = backgroundMeteorsRef.current.filter(m => {
         m.x += m.vx;
         m.y += m.vy;
-        m.burnProgress += 0.02;
+        m.burnProgress += 0.015;
 
-        if (m.burnProgress < 1 && m.y < canvas.height - 200) {
-          // Meteor trail
-          for (let i = 0; i < 4; i++) {
-            const trailX = m.x - m.vx * i * 3;
-            const trailY = m.y - m.vy * i * 3;
-            const trailAlpha = (1 - m.burnProgress) * (4 - i) / 4 * 0.6;
+        if (m.burnProgress < 1 && m.y < canvas.height - 150) {
+          // Long, bright trail
+          for (let i = 0; i < 10; i++) {
+            const trailX = m.x - m.vx * i * 5;
+            const trailY = m.y - m.vy * i * 5;
+            const trailAlpha = (1 - m.burnProgress) * (10 - i) / 10 * 0.8;
+            const trailSize = m.size * (1 - i * 0.08);
 
-            const trailGradient = ctx.createRadialGradient(trailX, trailY, 0, trailX, trailY, m.size * 2);
-            trailGradient.addColorStop(0, `rgba(255, 200, 150, ${trailAlpha})`);
+            const trailGradient = ctx.createRadialGradient(trailX, trailY, 0, trailX, trailY, trailSize * 3);
+            trailGradient.addColorStop(0, `rgba(255, 240, 200, ${trailAlpha})`);
+            trailGradient.addColorStop(0.4, `rgba(255, 180, 120, ${trailAlpha * 0.7})`);
             trailGradient.addColorStop(1, `rgba(255, 100, 50, 0)`);
             ctx.fillStyle = trailGradient;
             ctx.beginPath();
-            ctx.arc(trailX, trailY, m.size * 2, 0, Math.PI * 2);
+            ctx.arc(trailX, trailY, trailSize * 3, 0, Math.PI * 2);
             ctx.fill();
           }
 
-          // Meteor body
+          // Meteor body with glow
           const meteorAlpha = 1 - m.burnProgress;
-          ctx.fillStyle = `rgba(255, 220, 180, ${meteorAlpha})`;
+          const bodyGlow = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.size * 2);
+          bodyGlow.addColorStop(0, `rgba(255, 255, 255, ${meteorAlpha})`);
+          bodyGlow.addColorStop(0.5, `rgba(255, 200, 150, ${meteorAlpha * 0.8})`);
+          bodyGlow.addColorStop(1, `rgba(255, 150, 100, 0)`);
+          ctx.fillStyle = bodyGlow;
+          ctx.beginPath();
+          ctx.arc(m.x, m.y, m.size * 2, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Core
+          ctx.fillStyle = `rgba(255, 240, 220, ${meteorAlpha})`;
           ctx.beginPath();
           ctx.arc(m.x, m.y, m.size, 0, Math.PI * 2);
           ctx.fill();
@@ -574,18 +615,21 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
 
           if (spark.life > 0) {
             const alpha = spark.life;
-            ctx.fillStyle = `rgba(200, 150, 255, ${alpha})`;
+
+            // Spark trail
+            ctx.fillStyle = `rgba(200, 150, 255, ${alpha * 0.3})`;
             ctx.beginPath();
-            ctx.arc(spark.x, spark.y, 2, 0, Math.PI * 2);
+            ctx.arc(spark.x, spark.y, 3, 0, Math.PI * 2);
             ctx.fill();
 
             // Spark glow
-            const sparkGlow = ctx.createRadialGradient(spark.x, spark.y, 0, spark.x, spark.y, 6);
-            sparkGlow.addColorStop(0, `rgba(255, 200, 255, ${alpha * 0.8})`);
+            const sparkGlow = ctx.createRadialGradient(spark.x, spark.y, 0, spark.x, spark.y, 10);
+            sparkGlow.addColorStop(0, `rgba(255, 200, 255, ${alpha})`);
+            sparkGlow.addColorStop(0.5, `rgba(220, 180, 255, ${alpha * 0.6})`);
             sparkGlow.addColorStop(1, 'rgba(200, 150, 255, 0)');
             ctx.fillStyle = sparkGlow;
             ctx.beginPath();
-            ctx.arc(spark.x, spark.y, 6, 0, Math.PI * 2);
+            ctx.arc(spark.x, spark.y, 10, 0, Math.PI * 2);
             ctx.fill();
 
             return true;
@@ -593,13 +637,12 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           return false;
         });
 
-        // Title glitch effect
-        if (timeRef.current > glitchRef.current.nextGlitch) {
-          glitchRef.current.active = true;
-          glitchRef.current.intensity = Math.random();
-          glitchRef.current.nextGlitch = timeRef.current + Math.random() * 3 + 1;
+        // Title glitch effect - update state to trigger re-render
+        if (timeRef.current > nextGlitchRef.current) {
+          setTitleGlitch({ active: true, intensity: Math.random() });
+          nextGlitchRef.current = timeRef.current + Math.random() * 3 + 1;
           setTimeout(() => {
-            glitchRef.current.active = false;
+            setTitleGlitch({ active: false, intensity: 0 });
           }, 50 + Math.random() * 100);
         }
       }
@@ -613,6 +656,9 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       window.removeEventListener('resize', resize);
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
+      }
+      if (meteorSpawnIntervalRef.current) {
+        clearInterval(meteorSpawnIntervalRef.current);
       }
     };
   }, []);
@@ -630,19 +676,20 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
           style={{
             top: '35%',
-            transform: glitchRef.current.active
-              ? `translate(${(Math.random() - 0.5) * 20 * glitchRef.current.intensity}px, ${(Math.random() - 0.5) * 10 * glitchRef.current.intensity}px)`
+            transform: titleGlitch.active
+              ? `translate(${(Math.random() - 0.5) * 20 * titleGlitch.intensity}px, ${(Math.random() - 0.5) * 10 * titleGlitch.intensity}px)`
               : 'translate(0, 0)',
+            transition: titleGlitch.active ? 'none' : 'transform 0.1s ease-out',
           }}
         >
           <h1
             className="text-8xl font-bold text-white tracking-widest select-none"
             style={{
               fontFamily: "'Rubik Burned', cursive",
-              textShadow: glitchRef.current.active
+              textShadow: titleGlitch.active
                 ? `
-                  ${(Math.random() - 0.5) * 10}px ${(Math.random() - 0.5) * 10}px 20px rgba(255, 0, 100, ${glitchRef.current.intensity}),
-                  ${(Math.random() - 0.5) * 10}px ${(Math.random() - 0.5) * 10}px 20px rgba(0, 255, 255, ${glitchRef.current.intensity}),
+                  ${(Math.random() - 0.5) * 10}px ${(Math.random() - 0.5) * 10}px 20px rgba(255, 0, 100, ${titleGlitch.intensity}),
+                  ${(Math.random() - 0.5) * 10}px ${(Math.random() - 0.5) * 10}px 20px rgba(0, 255, 255, ${titleGlitch.intensity}),
                   0 0 40px rgba(150, 100, 200, 0.9),
                   0 0 80px rgba(100, 50, 150, 0.6),
                   0 0 120px rgba(80, 40, 120, 0.4)
@@ -652,10 +699,10 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
                   0 0 80px rgba(100, 50, 150, 0.6),
                   0 0 120px rgba(80, 40, 120, 0.4)
                 `,
-              filter: glitchRef.current.active
-                ? `hue-rotate(${Math.random() * 360}deg) saturate(${1 + glitchRef.current.intensity * 2})`
+              filter: titleGlitch.active
+                ? `hue-rotate(${Math.random() * 360}deg) saturate(${1 + titleGlitch.intensity * 2})`
                 : 'none',
-              opacity: glitchRef.current.active && Math.random() < 0.3 ? 0.3 : 1,
+              opacity: titleGlitch.active && Math.random() < 0.3 ? 0.3 : 1,
               animation: 'titleFloat 3s ease-in-out infinite',
             }}
           >
@@ -670,7 +717,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           style={{
             bottom: '20%',
             transform: 'translateX(-50%)',
-            animation: 'buttonGlitchIn 0.8s ease-out, buttonFloat 4s ease-in-out infinite',
+            animation: 'buttonGlitchIn 1.2s ease-out, buttonFloat 4s ease-in-out infinite 1.2s',
           }}
         >
           <div
@@ -679,8 +726,8 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
             onMouseLeave={() => setButtonHover(false)}
             className="cursor-pointer transition-all duration-300"
             style={{
-              fontFamily: "'Rubik Burned', cursive",
-              fontSize: '2.5rem',
+              fontFamily: "'Rubik Marker Hatch', cursive",
+              fontSize: '1.5rem',
               color: 'white',
               textShadow: buttonHoverRef.current
                 ? `
@@ -695,7 +742,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
                   0 0 45px rgba(100, 60, 150, 0.4)
                 `,
               filter: buttonHoverRef.current ? 'brightness(1.3)' : 'brightness(1)',
-              letterSpacing: '0.1em',
+              letterSpacing: '0.15em',
             }}
           >
             BEGIN THE DESCENT
@@ -725,29 +772,58 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         @keyframes buttonGlitchIn {
           0% {
             opacity: 0;
-            transform: translateX(-50%) translateY(20px);
-            filter: blur(10px);
+            transform: translateX(-50%) translateY(30px);
+            filter: blur(20px) hue-rotate(180deg);
           }
-          20% {
-            opacity: 0.3;
-            transform: translateX(calc(-50% + 10px)) translateY(0px);
+          10% {
+            opacity: 0.2;
+            transform: translateX(calc(-50% + 30px)) translateY(10px);
+            filter: blur(15px) hue-rotate(90deg);
           }
-          40% {
+          15% {
+            opacity: 0;
+            transform: translateX(calc(-50% - 25px)) translateY(5px);
+          }
+          25% {
+            opacity: 0.5;
+            transform: translateX(calc(-50% + 15px)) translateY(-5px);
+            filter: blur(10px) hue-rotate(270deg);
+          }
+          35% {
+            opacity: 0.1;
+            transform: translateX(calc(-50% - 20px)) translateY(8px);
+          }
+          45% {
             opacity: 0.7;
-            transform: translateX(calc(-50% - 8px)) translateY(0px);
+            transform: translateX(calc(-50% + 10px)) translateY(-3px);
+            filter: blur(8px) hue-rotate(45deg);
           }
-          60% {
+          55% {
+            opacity: 0.3;
+            transform: translateX(calc(-50% - 12px)) translateY(4px);
+          }
+          65% {
+            opacity: 0.8;
+            transform: translateX(calc(-50% + 8px)) translateY(-2px);
+            filter: blur(5px) hue-rotate(180deg);
+          }
+          75% {
             opacity: 0.4;
-            transform: translateX(calc(-50% + 5px)) translateY(0px);
+            transform: translateX(calc(-50% - 6px)) translateY(2px);
           }
-          80% {
+          85% {
             opacity: 0.9;
-            transform: translateX(calc(-50% - 3px)) translateY(0px);
+            transform: translateX(calc(-50% + 3px)) translateY(-1px);
+            filter: blur(2px) hue-rotate(90deg);
+          }
+          95% {
+            opacity: 0.6;
+            transform: translateX(calc(-50% - 2px)) translateY(1px);
           }
           100% {
             opacity: 1;
             transform: translateX(-50%) translateY(0px);
-            filter: blur(0px);
+            filter: blur(0px) hue-rotate(0deg);
           }
         }
       `}</style>
