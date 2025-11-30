@@ -187,6 +187,9 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         }
 
         // Draw star
+        if (frameCount === 1 && index === 0) {
+          console.log(`First star: pos(${star.x.toFixed(1)}, ${star.y.toFixed(1)}), size=${star.size.toFixed(2)}, alpha=${alpha.toFixed(2)}`);
+        }
         ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
