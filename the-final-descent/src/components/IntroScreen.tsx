@@ -29,6 +29,10 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
   const [showTitle, setShowTitle] = useState(false);
   const [showButton, setShowButton] = useState(false);
   const [buttonHover, setButtonHover] = useState(false);
+
+  // Use ref to track buttonHover without triggering re-renders in useEffect
+  const buttonHoverRef = useRef(false);
+
   const animationRef = useRef<number | undefined>(undefined);
   const starsRef = useRef<Star[]>([]);
   const cracksRef = useRef<VoidCrack[]>([]);
@@ -42,27 +46,22 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
   const timeRef = useRef(0);
   const impactTimeRef = useRef(0);
 
+  // Sync buttonHover state with ref
   useEffect(() => {
-    console.log('IntroScreen mounted');
+    buttonHoverRef.current = buttonHover;
+  }, [buttonHover]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) {
-      console.error('Canvas ref is null');
-      return;
-    }
+    if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      console.error('Could not get 2d context');
-      return;
-    }
-
-    console.log('Canvas context acquired');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return;
 
     // Set canvas size
     const resize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      console.log(`Canvas resized to ${canvas.width}x${canvas.height}`);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -81,7 +80,6 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         });
       }
       starsRef.current = stars;
-      console.log(`Initialized ${stars.length} stars`);
     };
     initStars();
 
@@ -99,29 +97,17 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
     }, 2000);
 
     // Animation loop
-    let frameCount = 0;
     const animate = () => {
-      if (!ctx || !canvas) {
-        console.error('animate: ctx or canvas is null');
-        return;
-      }
-
-      frameCount++;
-      if (frameCount === 1) {
-        console.log('First animation frame running');
-      }
+      if (!ctx || !canvas) return;
 
       timeRef.current += 0.016;
-      // Temporary: bright background to test visibility
-      ctx.fillStyle = frameCount < 120 ? '#ff0000' : '#0a0a14';
+
+      // Dark space background
+      ctx.fillStyle = '#0a0a14';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      if (frameCount === 1) {
-        console.log(`Drawing ${starsRef.current.length} stars`);
-      }
-
       // Draw and update stars
-      starsRef.current.forEach((star, index) => {
+      starsRef.current.forEach((star) => {
         // Twinkling effect
         star.twinklePhase += star.twinkleSpeed;
         const twinkle = Math.sin(star.twinklePhase) * 0.2 + 0.8;
@@ -188,9 +174,6 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         }
 
         // Draw star
-        if (frameCount === 1 && index === 0) {
-          console.log(`First star: pos(${star.x.toFixed(1)}, ${star.y.toFixed(1)}), size=${star.size.toFixed(2)}, alpha=${alpha.toFixed(2)}`);
-        }
         ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
@@ -337,8 +320,8 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         ctx.fillRect(0, canvas.height - 200, canvas.width, 200);
       }
 
-      // Draw ghostly trails on hover
-      if (buttonHover && showButton) {
+      // Draw ghostly trails on hover - use ref to avoid dependency
+      if (buttonHoverRef.current && showButton) {
         // Six stars representing the original expedition
         for (let i = 0; i < 6; i++) {
           const offsetX = (i - 2.5) * 80;
@@ -366,7 +349,6 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       animationRef.current = requestAnimationFrame(animate);
     };
 
-    console.log('Starting animation loop');
     animate();
 
     return () => {
@@ -375,13 +357,14 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [buttonHover]);
+  }, []); // Only run once on mount
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-[#0a0a14]">
+    <div className="fixed inset-0 w-full h-full overflow-hidden bg-[#0a0a14]">
       <canvas
         ref={canvasRef}
-        className="absolute inset-0"
+        className="absolute inset-0 w-full h-full"
+        style={{ display: 'block' }}
       />
 
       {showTitle && (
