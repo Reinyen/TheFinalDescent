@@ -123,8 +123,8 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       starsRef.current.forEach((star, index) => {
         // Twinkling effect
         star.twinklePhase += star.twinkleSpeed;
-        const twinkle = Math.sin(star.twinklePhase) * 0.3 + 0.7;
-        const alpha = star.brightness * twinkle;
+        const twinkle = Math.sin(star.twinklePhase) * 0.2 + 0.8;
+        const alpha = Math.min(1.0, star.brightness * twinkle * 1.2);
 
         // Check if pulled by meteor
         if (phaseRef.current === 'meteor' && meteorRef.current.active) {
