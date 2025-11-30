@@ -255,7 +255,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           const shockGradient = ctx.createRadialGradient(
             canvas.width / 2,
             canvas.height,
-            shockwaveRadius - 20,
+            Math.max(0, shockwaveRadius - 20),
             canvas.width / 2,
             canvas.height,
             shockwaveRadius + 20
