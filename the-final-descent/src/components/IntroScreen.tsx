@@ -43,16 +43,26 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
   const impactTimeRef = useRef(0);
 
   useEffect(() => {
+    console.log('IntroScreen mounted');
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) {
+      console.error('Canvas ref is null');
+      return;
+    }
 
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) {
+      console.error('Could not get 2d context');
+      return;
+    }
+
+    console.log('Canvas context acquired');
 
     // Set canvas size
     const resize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
+      console.log(`Canvas resized to ${canvas.width}x${canvas.height}`);
     };
     resize();
     window.addEventListener('resize', resize);
