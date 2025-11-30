@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import type { Combatant, Ability, CombatAction } from '../types/core';
+import type { Combatant, Ability, CombatAction, Item } from '../types/core';
 import { COMBAT_CONSTANTS } from '../types/core';
 import {
   initializeCombat,
@@ -34,14 +34,20 @@ interface CombatState {
   combatStatus: 'setup' | 'player_turn' | 'resolving' | 'ended';
   combatResult: 'ongoing' | 'player_victory' | 'player_defeat';
 
+  // Inventory
+  availableItems: Item[];
+  usedItemThisRound: boolean;
+  resurrectionUsed: boolean; // Phoenix Feather can only be used once per combat
+
   // Tracking for AI
   lastRoundDamage: Map<string, number>;
   lastRoundHealing: Map<string, number>;
 
   // Actions
-  startCombat: (players: Combatant[], enemies: Combatant[]) => void;
+  startCombat: (players: Combatant[], enemies: Combatant[], inventory?: Item[]) => void;
   queuePlayerAction: (ability: Ability, actorIds: string[], targetIds: string[]) => void;
   queuePlayerDefend: (actorId: string) => void;
+  queuePlayerItem: (item: Item, targetId?: string) => void;
   commitPlayerActions: () => void;
   resolveNextAction: () => void;
   nextRound: () => void;
@@ -63,11 +69,14 @@ export const useCombatStore = create<CombatState>((set, get) => ({
   offeredActions: [],
   combatStatus: 'setup',
   combatResult: 'ongoing',
+  availableItems: [],
+  usedItemThisRound: false,
+  resurrectionUsed: false,
   lastRoundDamage: new Map(),
   lastRoundHealing: new Map(),
 
   // Start a new combat
-  startCombat: (players: Combatant[], enemies: Combatant[]) => {
+  startCombat: (players: Combatant[], enemies: Combatant[], inventory: Item[] = []) => {
     const combat = initializeCombat(players, enemies);
 
     set({
@@ -75,6 +84,9 @@ export const useCombatStore = create<CombatState>((set, get) => ({
       maxSP: COMBAT_CONSTANTS.MAX_SP,
       combatStatus: 'player_turn',
       combatResult: 'ongoing',
+      availableItems: inventory,
+      usedItemThisRound: false,
+      resurrectionUsed: false,
       lastRoundDamage: new Map(),
       lastRoundHealing: new Map(),
       offeredActions: generateActionOffer(players, combat.currentSP),
@@ -125,6 +137,132 @@ export const useCombatStore = create<CombatState>((set, get) => ({
     set({
       actionQueue: newQueue,
       combatLog: [...get().combatLog, 'Defend action queued'],
+    });
+  },
+
+  // Use an item
+  queuePlayerItem: (item: Item, targetId?: string) => {
+    const state = get();
+
+    // Check if item already used this round
+    if (state.usedItemThisRound) {
+      set({
+        combatLog: [...state.combatLog, 'Can only use 1 item per round!'],
+      });
+      return;
+    }
+
+    // Check phoenix feather special case
+    if (item.id === 'phoenix_feather' && state.resurrectionUsed) {
+      set({
+        combatLog: [...state.combatLog, 'Phoenix Feather already used this combat!'],
+      });
+      return;
+    }
+
+    // Apply item effect immediately
+    const log: string[] = [`Used ${item.name}`];
+
+    switch (item.type) {
+      case 'healing_potion': {
+        // Restore 30 HP to single ally
+        const target = state.playerCombatants.find(c => c.id === targetId);
+        if (target && target.isAlive) {
+          const healAmount = 30;
+          const actualHeal = Math.min(healAmount, target.stats.maxHp - target.stats.currentHp);
+          target.stats.currentHp = Math.min(target.stats.maxHp, target.stats.currentHp + healAmount);
+          log.push(`${target.name} healed ${actualHeal} HP`);
+        }
+        break;
+      }
+
+      case 'sp_potion': {
+        // Gain +3 SP
+        const newSP = Math.min(COMBAT_CONSTANTS.MAX_SP, state.currentSP + 3);
+        const gain = newSP - state.currentSP;
+        set({ currentSP: newSP });
+        log.push(`Gained ${gain} SP`);
+        break;
+      }
+
+      case 'temp_buff': {
+        // Handle various temp buffs
+        if (item.id === 'smoke_bomb') {
+          // All allies gain 30% evasion for 2 rounds
+          for (const ally of state.playerCombatants.filter(c => c.isAlive)) {
+            ally.statusEffects.push({
+              statusId: 'evasion',
+              duration: 2,
+              magnitude: 30,
+              source: 'smoke_bomb',
+            });
+          }
+          log.push('All allies gain 30% evasion (2 rounds)');
+        } else if (item.id === 'cleansing_salve') {
+          // Remove all debuffs from single target
+          const target = state.playerCombatants.find(c => c.id === targetId);
+          if (target && target.isAlive) {
+            const debuffCount = target.statusEffects.filter(s =>
+              ['fractured', 'bleed', 'weakness'].includes(s.statusId)
+            ).length;
+            target.statusEffects = target.statusEffects.filter(s =>
+              !['fractured', 'bleed', 'weakness'].includes(s.statusId)
+            );
+            log.push(`Removed ${debuffCount} debuff(s) from ${target.name}`);
+          }
+        } else if (item.id === 'berserker_brew') {
+          // Target gains +5 CON but -3 SPD (3 rounds)
+          const target = state.playerCombatants.find(c => c.id === targetId);
+          if (target && target.isAlive) {
+            target.stats.con += 5;
+            target.stats.spd -= 3;
+            // Store for cleanup after 3 rounds (simplified - would need better tracking)
+            log.push(`${target.name} gains +5 CON, -3 SPD (3 rounds)`);
+          }
+        } else if (item.id === 'temporal_crystal') {
+          // Reset all cooldowns for single character
+          const target = state.playerCombatants.find(c => c.id === targetId);
+          if (target && target.isAlive) {
+            const cooldownCount = target.cooldowns.size;
+            target.cooldowns.clear();
+            log.push(`Reset ${cooldownCount} cooldown(s) for ${target.name}`);
+          }
+        } else if (item.id === 'void_shard') {
+          // Next ability costs 0 SP (would need buff tracking for this)
+          // For now, just add SP equal to average ability cost
+          const newSP = Math.min(COMBAT_CONSTANTS.MAX_SP, state.currentSP + 3);
+          set({ currentSP: newSP });
+          log.push('Next ability costs less SP');
+        }
+        break;
+      }
+
+      case 'resurrect': {
+        // Revive fallen ally at 25% HP
+        const target = state.playerCombatants.find(c => c.id === targetId);
+        if (target && !target.isAlive) {
+          const reviveHP = Math.floor(target.stats.maxHp * 0.25);
+          target.stats.currentHp = reviveHP;
+          target.isAlive = true;
+          target.statusEffects = [];
+          set({ resurrectionUsed: true });
+          log.push(`${target.name} revived at ${reviveHP} HP!`);
+        }
+        break;
+      }
+
+      default:
+        log.push('Item type not usable in combat');
+        return;
+    }
+
+    // Remove item from inventory
+    const updatedInventory = state.availableItems.filter(i => i.id !== item.id || i !== item);
+
+    set({
+      availableItems: updatedInventory,
+      usedItemThisRound: true,
+      combatLog: [...state.combatLog, ...log],
     });
   },
 
@@ -271,6 +409,7 @@ export const useCombatStore = create<CombatState>((set, get) => ({
       ],
       combatStatus: 'player_turn',
       defendActive: false,
+      usedItemThisRound: false,
       lastRoundDamage: new Map(),
       lastRoundHealing: new Map(),
       offeredActions: offers,
@@ -292,6 +431,9 @@ export const useCombatStore = create<CombatState>((set, get) => ({
       offeredActions: [],
       combatStatus: 'setup',
       combatResult: 'ongoing',
+      availableItems: [],
+      usedItemThisRound: false,
+      resurrectionUsed: false,
       lastRoundDamage: new Map(),
       lastRoundHealing: new Map(),
     });
