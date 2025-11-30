@@ -363,8 +363,8 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
     <div className="fixed inset-0 w-full h-full overflow-hidden bg-[#0a0a14]">
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 w-full h-full"
-        style={{ display: 'block' }}
+        className="absolute inset-0"
+        style={{ display: 'block', width: '100%', height: '100%' }}
       />
 
       {showTitle && (
