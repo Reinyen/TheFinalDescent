@@ -81,6 +81,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         });
       }
       starsRef.current = stars;
+      console.log(`Initialized ${stars.length} stars`);
     };
     initStars();
 
@@ -98,12 +99,25 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
     }, 2000);
 
     // Animation loop
+    let frameCount = 0;
     const animate = () => {
-      if (!ctx || !canvas) return;
+      if (!ctx || !canvas) {
+        console.error('animate: ctx or canvas is null');
+        return;
+      }
+
+      frameCount++;
+      if (frameCount === 1) {
+        console.log('First animation frame running');
+      }
 
       timeRef.current += 0.016;
       ctx.fillStyle = '#0a0a14';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (frameCount === 1) {
+        console.log(`Drawing ${starsRef.current.length} stars`);
+      }
 
       // Draw and update stars
       starsRef.current.forEach((star, index) => {
@@ -348,6 +362,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       animationRef.current = requestAnimationFrame(animate);
     };
 
+    console.log('Starting animation loop');
     animate();
 
     return () => {
