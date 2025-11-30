@@ -11,10 +11,11 @@ import { applyMemoryHealing, applyHazardDamage } from './engine/nodeResolver';
 import { getAllCharacters } from './data/characters';
 import type { NodeChoice } from './engine/nodeResolver';
 import type { Item } from './types/core';
+import { IntroScreen } from './components/IntroScreen';
 import './App.css';
 
 function App() {
-  const [gamePhase, setGamePhase] = useState<'party_select' | 'map' | 'node' | 'combat'>('party_select');
+  const [gamePhase, setGamePhase] = useState<'intro' | 'party_select' | 'map' | 'node' | 'combat'>('intro');
   const [selectedCharacters, setSelectedCharacters] = useState<string[]>([]);
 
   const runStore = useRunStore();
@@ -96,6 +97,10 @@ function App() {
   };
 
   // Render based on phase
+  if (gamePhase === 'intro') {
+    return <IntroScreen onBegin={() => setGamePhase('party_select')} />;
+  }
+
   if (gamePhase === 'party_select') {
     return <PartySelectScreen
       selectedCharacters={selectedCharacters}
