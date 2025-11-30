@@ -7,6 +7,7 @@ import type { Node, Combatant, Item } from '../types/core';
 import { FLOOR_CONSTANTS } from '../types/core';
 import { createEnemyCombatant, createBossCombatant } from '../utils/combatFactory';
 import { distributeHealing } from './calculations';
+import { generateShopInventory } from '../data/items';
 
 export interface NodeResult {
   nodeType: string;
@@ -19,6 +20,8 @@ export interface NodeResult {
   };
   combatRequired?: boolean;
   choices?: NodeChoice[];
+  shopInventory?: Item[]; // For shop nodes
+  hazardDamage?: number; // For hazard nodes
 }
 
 export interface NodeChoice {
@@ -105,15 +108,14 @@ export function applyMemoryHealing(party: Combatant[]): Map<string, number> {
  * Resolve shop node
  */
 function resolveShopNode(node: Node, floor: number): NodeResult {
-  // Generate shop inventory based on seed
-  // For now, return basic structure
+  // Generate shop inventory based on seed from encounter data
+  const seed = node.encounterData?.shopSeed;
+  const shopInventory = generateShopInventory(floor, seed);
 
   return {
     nodeType: 'shop',
-    completed: true,
-    rewards: {
-      // Shop doesn't give automatic rewards, player chooses items
-    },
+    completed: false, // Not completed until player leaves shop
+    shopInventory,
   };
 }
 
@@ -187,8 +189,8 @@ function resolveHazardNode(floor: number): NodeResult {
   return {
     nodeType: 'hazard',
     completed: true,
+    hazardDamage: damage,
     rewards: {
-      // Damage is applied in the store/UI
       items: gainItem ? [] : undefined, // Placeholder for rare item
     },
   };

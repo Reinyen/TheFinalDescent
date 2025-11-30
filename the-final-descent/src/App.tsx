@@ -7,9 +7,10 @@ import { useState } from 'react';
 import { useRunStore } from './store/runStore';
 import { useCombatStore } from './store/combatStore';
 import { getAvailableNodes } from './engine/mapGenerator';
-import { applyMemoryHealing } from './engine/nodeResolver';
+import { applyMemoryHealing, applyHazardDamage } from './engine/nodeResolver';
 import { getAllCharacters } from './data/characters';
 import type { NodeChoice } from './engine/nodeResolver';
+import type { Item } from './types/core';
 import './App.css';
 
 function App() {
@@ -43,7 +44,7 @@ function App() {
     if (result?.combatRequired) {
       // Start combat
       const enemies = runStore.startCombatFromNode();
-      combatStore.startCombat(runStore.party, enemies);
+      combatStore.startCombat(runStore.party, enemies, runStore.inventory);
       setGamePhase('combat');
     } else {
       // Non-combat node
@@ -60,6 +61,21 @@ function App() {
 
   const handleRestChoice = (choice: NodeChoice) => {
     runStore.makeRestChoice(choice);
+    setGamePhase('map');
+  };
+
+  const handleShopPurchase = (item: Item) => {
+    runStore.purchaseItem(item);
+  };
+
+  const handleHazardComplete = () => {
+    const result = runStore.currentNodeResult;
+    if (result?.hazardDamage) {
+      applyHazardDamage(runStore.party, result.hazardDamage);
+    }
+    if (runStore.currentNodeId) {
+      runStore.completeNode(runStore.currentNodeId);
+    }
     setGamePhase('map');
   };
 
@@ -96,6 +112,8 @@ function App() {
     return <NodeScreen
       onMemoryComplete={handleMemoryComplete}
       onRestChoice={handleRestChoice}
+      onShopPurchase={handleShopPurchase}
+      onHazardComplete={handleHazardComplete}
       onBack={() => setGamePhase('map')}
     />;
   }
@@ -260,13 +278,17 @@ function MapScreen({ onNodeClick }: { onNodeClick: (nodeId: string) => void }) {
 function NodeScreen({
   onMemoryComplete,
   onRestChoice,
+  onShopPurchase,
+  onHazardComplete,
   onBack,
 }: {
   onMemoryComplete: () => void;
   onRestChoice: (choice: NodeChoice) => void;
+  onShopPurchase: (item: Item) => void;
+  onHazardComplete: () => void;
   onBack: () => void;
 }) {
-  const { currentNodeResult } = useRunStore();
+  const { currentNodeResult, gold, inventory, party } = useRunStore();
 
   if (!currentNodeResult) return null;
 
@@ -329,14 +351,69 @@ function NodeScreen({
             </div>
           )}
 
-          {currentNodeResult.nodeType === 'shop' && (
+          {currentNodeResult.nodeType === 'shop' && currentNodeResult.shopInventory && (
             <div>
-              <p className="mb-6">Shop coming soon...</p>
+              <div className="mb-6">
+                <div className="flex justify-between mb-4">
+                  <p className="text-xl">Gold: {gold}</p>
+                  <p className="text-sm text-gray-400">Inventory: {inventory.length}/6</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {currentNodeResult.shopInventory.map((item, i) => (
+                    <div
+                      key={`${item.id}_${i}`}
+                      className="bg-slate-700 p-4 rounded"
+                    >
+                      <h3 className="font-bold mb-2">{item.name}</h3>
+                      <p className="text-sm text-gray-300 mb-3">{item.description}</p>
+                      <div className="flex justify-between items-center">
+                        <span className="text-yellow-400 font-bold">{item.cost} gold</span>
+                        <button
+                          onClick={() => onShopPurchase(item)}
+                          disabled={gold < item.cost || inventory.length >= 6}
+                          className={`px-3 py-1 rounded text-sm ${
+                            gold >= item.cost && inventory.length < 6
+                              ? 'bg-green-600 hover:bg-green-700'
+                              : 'bg-gray-600 cursor-not-allowed'
+                          }`}
+                        >
+                          Buy
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
               <button
                 onClick={onBack}
                 className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded"
               >
                 Leave Shop
+              </button>
+            </div>
+          )}
+
+          {currentNodeResult.nodeType === 'hazard' && (
+            <div>
+              <p className="mb-4 text-red-400 text-xl">
+                Trap triggered! Party takes {currentNodeResult.hazardDamage} damage!
+              </p>
+              <div className="mb-6 bg-slate-700 p-4 rounded">
+                <h3 className="font-bold mb-2">Party Status</h3>
+                {party.map(c => (
+                  <div key={c.id} className={`mb-1 ${c.isAlive ? 'text-white' : 'text-red-400'}`}>
+                    {c.name}: {c.stats.currentHp}/{c.stats.maxHp} HP {!c.isAlive && '(Dead)'}
+                  </div>
+                ))}
+              </div>
+              {currentNodeResult.rewards?.items && (
+                <p className="mb-4 text-green-400">Found a rare item!</p>
+              )}
+              <button
+                onClick={onHazardComplete}
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded"
+              >
+                Continue
               </button>
             </div>
           )}
@@ -362,7 +439,10 @@ function CombatScreen({ onCombatEnd }: { onCombatEnd: () => void }) {
     combatStatus,
     combatResult,
     offeredActions,
+    availableItems,
+    usedItemThisRound,
     queuePlayerAction,
+    queuePlayerItem,
     commitPlayerActions,
     resolveNextAction,
   } = useCombatStore();
@@ -406,6 +486,29 @@ function CombatScreen({ onCombatEnd }: { onCombatEnd: () => void }) {
     }
 
     queuePlayerAction(ability, actorIds, targetIds);
+  };
+
+  const handleItemClick = (itemIndex: number) => {
+    if (combatStatus !== 'player_turn' || usedItemThisRound) return;
+
+    const item = availableItems[itemIndex];
+    if (!item) return;
+
+    const livingPlayers = playerCombatants.filter(p => p.isAlive);
+    const deadPlayers = playerCombatants.filter(p => !p.isAlive);
+
+    // Simple targeting: use first living player, or first dead for resurrect
+    let targetId: string | undefined;
+
+    if (item.type === 'healing_potion' || item.id === 'cleansing_salve' ||
+        item.id === 'berserker_brew' || item.id === 'temporal_crystal') {
+      targetId = livingPlayers[0]?.id;
+    } else if (item.type === 'resurrect') {
+      targetId = deadPlayers[0]?.id;
+    }
+    // sp_potion and smoke_bomb don't need a target
+
+    queuePlayerItem(item, targetId);
   };
 
   const handleResolveAll = () => {
@@ -500,6 +603,32 @@ function CombatScreen({ onCombatEnd }: { onCombatEnd: () => void }) {
                 </button>
               ))}
             </div>
+
+            {availableItems.length > 0 && (
+              <div className="mb-3">
+                <h3 className="text-lg font-bold mb-2">
+                  Items {usedItemThisRound && <span className="text-yellow-400 text-sm">(Used this round)</span>}
+                </h3>
+                <div className="grid grid-cols-6 gap-2">
+                  {availableItems.map((item, i) => (
+                    <button
+                      key={`${item.id}_${i}`}
+                      onClick={() => handleItemClick(i)}
+                      disabled={usedItemThisRound}
+                      className={`p-2 rounded text-left text-xs ${
+                        usedItemThisRound
+                          ? 'bg-gray-600 cursor-not-allowed'
+                          : 'bg-purple-600 hover:bg-purple-700'
+                      }`}
+                      title={item.description}
+                    >
+                      <div className="font-bold">{item.name}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <button
               onClick={commitPlayerActions}
               className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded"

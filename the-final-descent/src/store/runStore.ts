@@ -53,6 +53,7 @@ interface RunState {
   completeCombat: (victory: boolean) => void;
   applyNodeReward: (healing?: Map<string, number>) => void;
   makeRestChoice: (choice: NodeChoice) => void;
+  purchaseItem: (item: Item) => boolean;
   levelUpParty: () => void;
   checkpoint: () => void;
   endRun: (reason: 'victory' | 'defeat' | 'give_up') => void;
@@ -321,6 +322,36 @@ export const useRunStore = create<RunState>((set, get) => ({
     if (state.currentNodeId) {
       get().completeNode(state.currentNodeId);
     }
+  },
+
+  // Purchase item from shop
+  purchaseItem: (item: Item) => {
+    const state = get();
+
+    // Check if player has enough gold
+    if (state.gold < item.cost) {
+      set({
+        runLog: [...state.runLog, `Not enough gold! Need ${item.cost}, have ${state.gold}`],
+      });
+      return false;
+    }
+
+    // Check inventory space (max 6 items)
+    if (state.inventory.length >= 6) {
+      set({
+        runLog: [...state.runLog, 'Inventory full! (Max 6 items)'],
+      });
+      return false;
+    }
+
+    // Purchase item
+    set({
+      gold: state.gold - item.cost,
+      inventory: [...state.inventory, item],
+      runLog: [...state.runLog, `Purchased ${item.name} for ${item.cost} gold`],
+    });
+
+    return true;
   },
 
   // Level up party
