@@ -112,7 +112,8 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       }
 
       timeRef.current += 0.016;
-      ctx.fillStyle = '#0a0a14';
+      // Temporary: bright background to test visibility
+      ctx.fillStyle = frameCount < 120 ? '#ff0000' : '#0a0a14';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       if (frameCount === 1) {
