@@ -1,675 +1,580 @@
 /**
- * Intro Screen - Professional cinematic animation
+ * IntroScreen - AAA-Quality Three.js Cinematic Experience
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { EffectComposer, Bloom, ChromaticAberration, Noise } from '@react-three/postprocessing';
+import { BlendFunction } from 'postprocessing';
+import * as THREE from 'three';
 
-interface Star {
-  x: number;
-  y: number;
-  size: number;
-  brightness: number;
-  twinkleSpeed: number;
-  twinklePhase: number;
-  pulledByMeteor?: boolean;
-  shouldBePulled?: boolean;
+// Starfield with depth
+function Starfield() {
+  const starsRef = useRef<THREE.Points>(null);
+  const [geometry] = useState(() => {
+    const geo = new THREE.BufferGeometry();
+    const positions = [];
+    const colors = [];
+    const sizes = [];
+
+    for (let i = 0; i < 2000; i++) {
+      // Distribute stars in 3D space for depth
+      positions.push(
+        (Math.random() - 0.5) * 100,
+        (Math.random() - 0.5) * 100,
+        (Math.random() - 0.5) * 50 - 10 // Depth
+      );
+
+      const color = new THREE.Color();
+      color.setHSL(0.6 + Math.random() * 0.1, 0.2, 0.8 + Math.random() * 0.2);
+      colors.push(color.r, color.g, color.b);
+
+      sizes.push(Math.random() * 2 + 0.5);
+    }
+
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+    return geo;
+  });
+
+  useFrame((state) => {
+    if (!starsRef.current) return;
+    const time = state.clock.getElapsedTime();
+
+    // Animate star brightness (twinkling)
+    const positions = starsRef.current.geometry.attributes.position.array as Float32Array;
+    const colors = starsRef.current.geometry.attributes.color.array as Float32Array;
+
+    for (let i = 0; i < positions.length / 3; i++) {
+      const twinkle = Math.sin(time * 2 + i * 0.1) * 0.3 + 0.7;
+      colors[i * 3] = (0.8 + Math.random() * 0.2) * twinkle;
+      colors[i * 3 + 1] = (0.8 + Math.random() * 0.2) * twinkle;
+      colors[i * 3 + 2] = (0.9 + Math.random() * 0.1) * twinkle;
+    }
+
+    starsRef.current.geometry.attributes.color.needsUpdate = true;
+  });
+
+  return (
+    <points ref={starsRef} geometry={geometry}>
+      <pointsMaterial
+        size={0.15}
+        vertexColors
+        transparent
+        opacity={1}
+        sizeAttenuation
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
+  );
 }
 
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  size: number;
-  life: number;
-  maxLife: number;
-  color: { r: number; g: number; b: number };
+// Main meteor
+function Meteor({ onImpact }: { onImpact: () => void }) {
+  const meteorRef = useRef<THREE.Group>(null);
+  const trailRef = useRef<THREE.Points>(null);
+  const [active, setActive] = useState(false);
+  const startTime = useRef(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setActive(true);
+      startTime.current = Date.now() / 1000;
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useFrame((state) => {
+    if (!active || !meteorRef.current) return;
+
+    const elapsed = state.clock.getElapsedTime() - startTime.current;
+    const speed = 0.3;
+
+    meteorRef.current.position.y = 30 - elapsed * speed * 60;
+
+    // Impact detection
+    if (meteorRef.current.position.y < -15) {
+      setActive(false);
+      onImpact();
+    }
+
+    // Update trail
+    if (trailRef.current) {
+      const positions = trailRef.current.geometry.attributes.position.array as Float32Array;
+      for (let i = positions.length - 3; i > 2; i -= 3) {
+        positions[i] = positions[i - 3];
+        positions[i + 1] = positions[i - 2];
+        positions[i + 2] = positions[i - 1];
+      }
+      positions[0] = meteorRef.current.position.x;
+      positions[1] = meteorRef.current.position.y;
+      positions[2] = meteorRef.current.position.z;
+      trailRef.current.geometry.attributes.position.needsUpdate = true;
+    }
+  });
+
+  if (!active) return null;
+
+  // Trail geometry
+  const trailPositions = new Float32Array(300);
+  const trailGeometry = new THREE.BufferGeometry();
+  trailGeometry.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+
+  return (
+    <group ref={meteorRef} position={[0, 30, 0]}>
+      {/* Meteor core */}
+      <mesh>
+        <sphereGeometry args={[0.5, 16, 16]} />
+        <meshBasicMaterial color="#ffffff" />
+      </mesh>
+
+      {/* Meteor glow */}
+      <mesh>
+        <sphereGeometry args={[1.5, 16, 16]} />
+        <meshBasicMaterial
+          color="#ffaa44"
+          transparent
+          opacity={0.6}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {/* Outer glow */}
+      <mesh>
+        <sphereGeometry args={[2.5, 16, 16]} />
+        <meshBasicMaterial
+          color="#ff6622"
+          transparent
+          opacity={0.3}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {/* Trail */}
+      <points ref={trailRef} geometry={trailGeometry}>
+        <pointsMaterial
+          size={0.3}
+          color="#ffaa44"
+          transparent
+          opacity={0.8}
+          blending={THREE.AdditiveBlending}
+        />
+      </points>
+    </group>
+  );
 }
 
-interface GlassFragment {
-  x: number;
-  y: number;
-  points: Array<{ x: number; y: number }>;
-  velocity: { x: number; y: number };
-  rotation: number;
-  rotationSpeed: number;
-  alpha: number;
-  glowIntensity: number;
-  pulsePhase: number;
+// Particle explosion system
+function ExplosionParticles({ trigger }: { trigger: boolean }) {
+  const particlesRef = useRef<THREE.Points>(null);
+  const velocities = useRef<Float32Array | null>(null);
+
+  const [geometry] = useState(() => {
+    const geo = new THREE.BufferGeometry();
+    const positions = [];
+    const colors = [];
+    const sizes = [];
+
+    for (let i = 0; i < 2000; i++) {
+      positions.push(0, -15, 0);
+
+      // Mix of orange fire and purple void
+      if (Math.random() < 0.6) {
+        colors.push(1, 0.5 + Math.random() * 0.3, 0.1);
+      } else {
+        colors.push(0.6, 0.3, 0.8 + Math.random() * 0.2);
+      }
+
+      sizes.push(Math.random() * 0.3 + 0.1);
+    }
+
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+    // Create velocities
+    const vels = new Float32Array(positions.length);
+    for (let i = 0; i < positions.length; i += 3) {
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.random() * Math.PI;
+      const speed = Math.random() * 0.5 + 0.2;
+
+      vels[i] = Math.sin(phi) * Math.cos(theta) * speed;
+      vels[i + 1] = Math.abs(Math.cos(phi)) * speed * 0.5 + 0.3;
+      vels[i + 2] = Math.sin(phi) * Math.sin(theta) * speed;
+    }
+    velocities.current = vels;
+
+    return geo;
+  });
+
+  useFrame(() => {
+    if (!trigger || !particlesRef.current || !velocities.current) return;
+
+    const positions = particlesRef.current.geometry.attributes.position.array as Float32Array;
+    const sizes = particlesRef.current.geometry.attributes.size.array as Float32Array;
+
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i] += velocities.current[i];
+      positions[i + 1] += velocities.current[i + 1];
+      positions[i + 2] += velocities.current[i + 2];
+
+      velocities.current[i + 1] -= 0.01; // Gravity
+      velocities.current[i] *= 0.99;
+      velocities.current[i + 2] *= 0.99;
+
+      sizes[i / 3] *= 0.99;
+    }
+
+    particlesRef.current.geometry.attributes.position.needsUpdate = true;
+    particlesRef.current.geometry.attributes.size.needsUpdate = true;
+  });
+
+  if (!trigger) return null;
+
+  return (
+    <points ref={particlesRef} geometry={geometry}>
+      <pointsMaterial
+        vertexColors
+        transparent
+        opacity={0.9}
+        sizeAttenuation
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
+  );
 }
 
-interface BackgroundMeteor {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  size: number;
-  life: number;
-  burnProgress: number;
+// Shattered glass fragments
+function ShatteredGlass({ trigger }: { trigger: boolean }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const [fragments] = useState(() => {
+    const frags = [];
+    for (let i = 0; i < 50; i++) {
+      const angle = (i / 50) * Math.PI - Math.PI / 2;
+      const distance = 3 + Math.random() * 2;
+      const shape = new THREE.Shape();
+
+      // Create irregular polygon
+      const sides = 5 + Math.floor(Math.random() * 3);
+      const size = 0.3 + Math.random() * 0.2;
+
+      for (let j = 0; j < sides; j++) {
+        const a = (j / sides) * Math.PI * 2;
+        const r = size * (0.7 + Math.random() * 0.3);
+        const x = Math.cos(a) * r;
+        const y = Math.sin(a) * r;
+
+        if (j === 0) shape.moveTo(x, y);
+        else shape.lineTo(x, y);
+      }
+      shape.closePath();
+
+      frags.push({
+        shape,
+        position: [
+          Math.cos(angle) * distance,
+          -15 + Math.sin(angle) * distance * 0.5,
+          (Math.random() - 0.5) * 2
+        ] as [number, number, number],
+        rotation: [Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI] as [number, number, number],
+        rotationSpeed: [(Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.02] as [number, number, number],
+      });
+    }
+    return frags;
+  });
+
+  useFrame(() => {
+    if (!trigger || !groupRef.current) return;
+
+    groupRef.current.children.forEach((child, i) => {
+      const frag = fragments[i];
+      child.rotation.x += frag.rotationSpeed[0];
+      child.rotation.y += frag.rotationSpeed[1];
+      child.rotation.z += frag.rotationSpeed[2];
+    });
+  });
+
+  if (!trigger) return null;
+
+  return (
+    <group ref={groupRef}>
+      {fragments.map((frag, i) => (
+        <mesh key={i} position={frag.position} rotation={frag.rotation}>
+          <shapeGeometry args={[frag.shape]} />
+          <meshBasicMaterial
+            color="#8844ff"
+            transparent
+            opacity={0.6}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
 }
 
-interface EnergySpark {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
+// Volumetric light beams from crater
+function VoidBeams({ trigger }: { trigger: boolean }) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  useFrame((state) => {
+    if (!trigger || !groupRef.current) return;
+    const time = state.clock.getElapsedTime();
+
+    groupRef.current.children.forEach((child, i) => {
+      const pulse = Math.sin(time * 2 + i * 0.5) * 0.3 + 0.7;
+      (child as THREE.Mesh).material.opacity = 0.4 * pulse;
+    });
+  });
+
+  if (!trigger) return null;
+
+  const beams = [];
+  for (let i = 0; i < 20; i++) {
+    const angle = (i / 20) * Math.PI - Math.PI / 2;
+    const length = 8 + Math.random() * 4;
+
+    beams.push({
+      angle,
+      length,
+      width: 0.05 + Math.random() * 0.05,
+    });
+  }
+
+  return (
+    <group ref={groupRef} position={[0, -15, 0]}>
+      {beams.map((beam, i) => {
+        const geometry = new THREE.CylinderGeometry(beam.width, beam.width * 0.3, beam.length, 8, 1, true);
+        const material = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(0.5, 0.2, 0.8),
+          transparent: true,
+          opacity: 0.4,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+        });
+
+        return (
+          <mesh
+            key={i}
+            geometry={geometry}
+            material={material}
+            position={[
+              Math.cos(beam.angle) * 0.5,
+              beam.length / 2,
+              Math.sin(beam.angle) * 0.5
+            ]}
+            rotation={[0, 0, beam.angle + Math.PI / 2]}
+          />
+        );
+      })}
+    </group>
+  );
 }
 
+// Background meteors
+function BackgroundMeteors({ trigger }: { trigger: boolean }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const [meteors, setMeteors] = useState<Array<{
+    id: number;
+    position: THREE.Vector3;
+    velocity: THREE.Vector3;
+    size: number;
+    life: number;
+  }>>([]);
+
+  useEffect(() => {
+    if (!trigger) return;
+
+    const interval = setInterval(() => {
+      if (Math.random() < 0.7) {
+        const side = Math.random();
+        let pos, vel;
+
+        if (side < 0.33) {
+          pos = new THREE.Vector3(-20 + Math.random() * 15, 20 + Math.random() * 10, -10 + Math.random() * 5);
+          vel = new THREE.Vector3(0.3 + Math.random() * 0.2, -0.5 - Math.random() * 0.3, 0);
+        } else if (side < 0.66) {
+          pos = new THREE.Vector3(5 + Math.random() * 15, 20 + Math.random() * 10, -10 + Math.random() * 5);
+          vel = new THREE.Vector3(-0.3 - Math.random() * 0.2, -0.5 - Math.random() * 0.3, 0);
+        } else {
+          pos = new THREE.Vector3((Math.random() - 0.5) * 40, 20 + Math.random() * 10, -10 + Math.random() * 5);
+          vel = new THREE.Vector3((Math.random() - 0.5) * 0.4, -0.5 - Math.random() * 0.3, 0);
+        }
+
+        setMeteors(prev => [...prev, {
+          id: Date.now() + Math.random(),
+          position: pos,
+          velocity: vel,
+          size: 0.3 + Math.random() * 0.2,
+          life: 1,
+        }]);
+      }
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [trigger]);
+
+  useFrame(() => {
+    setMeteors(prev => prev.filter(m => {
+      m.position.add(m.velocity);
+      m.life -= 0.01;
+      return m.life > 0 && m.position.y > -10;
+    }));
+  });
+
+  if (!trigger) return null;
+
+  return (
+    <group ref={groupRef}>
+      {meteors.map(meteor => (
+        <group key={meteor.id} position={meteor.position}>
+          <mesh>
+            <sphereGeometry args={[meteor.size, 8, 8]} />
+            <meshBasicMaterial
+              color="#ffcc88"
+              transparent
+              opacity={meteor.life}
+            />
+          </mesh>
+          <mesh>
+            <sphereGeometry args={[meteor.size * 2, 8, 8]} />
+            <meshBasicMaterial
+              color="#ff8844"
+              transparent
+              opacity={meteor.life * 0.5}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+// Camera controller
+function CameraController({ impacted }: { impacted: boolean }) {
+  const { camera } = useThree();
+  const impactTime = useRef(0);
+
+  useEffect(() => {
+    camera.position.set(0, 0, 30);
+    camera.lookAt(0, 0, 0);
+  }, [camera]);
+
+  useFrame((state) => {
+    if (impacted && impactTime.current === 0) {
+      impactTime.current = state.clock.getElapsedTime();
+    }
+
+    if (impactTime.current > 0) {
+      const elapsed = state.clock.getElapsedTime() - impactTime.current;
+
+      // Camera shake during impact
+      if (elapsed < 0.5) {
+        const intensity = (0.5 - elapsed) * 2;
+        camera.position.x = Math.sin(elapsed * 50) * intensity * 0.5;
+        camera.position.y = Math.cos(elapsed * 30) * intensity * 0.3;
+      } else {
+        camera.position.x = 0;
+        camera.position.y = 0;
+      }
+    }
+  });
+
+  return null;
+}
+
+// Main scene component
+function Scene({ onImpact }: { onImpact: () => void }) {
+  const [impacted, setImpacted] = useState(false);
+
+  const handleImpact = () => {
+    setImpacted(true);
+    onImpact();
+  };
+
+  return (
+    <>
+      <CameraController impacted={impacted} />
+      <Starfield />
+      <Meteor onImpact={handleImpact} />
+      <ExplosionParticles trigger={impacted} />
+      <ShatteredGlass trigger={impacted} />
+      <VoidBeams trigger={impacted} />
+      <BackgroundMeteors trigger={impacted} />
+
+      {/* Crater glow */}
+      {impacted && (
+        <mesh position={[0, -15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[8, 32]} />
+          <meshBasicMaterial
+            color="#6633aa"
+            transparent
+            opacity={0.3}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      )}
+
+      {/* Post-processing effects */}
+      <EffectComposer>
+        <Bloom
+          intensity={1.5}
+          luminanceThreshold={0.2}
+          luminanceSmoothing={0.9}
+          mipmapBlur
+        />
+        <ChromaticAberration
+          offset={[0.002, 0.002]}
+          blendFunction={BlendFunction.NORMAL}
+        />
+        <Noise
+          opacity={0.15}
+          blendFunction={BlendFunction.OVERLAY}
+        />
+      </EffectComposer>
+    </>
+  );
+}
+
+// Main IntroScreen component
 export function IntroScreen({ onBegin }: { onBegin: () => void }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showTitle, setShowTitle] = useState(false);
   const [showButton, setShowButton] = useState(false);
   const [buttonHover, setButtonHover] = useState(false);
   const [titleGlitch, setTitleGlitch] = useState({ active: false, intensity: 0 });
-  const buttonHoverRef = useRef(false);
-
-  const animationRef = useRef<number | undefined>(undefined);
-  const starsRef = useRef<Star[]>([]);
-  const particlesRef = useRef<Particle[]>([]);
-  const glassFragmentsRef = useRef<GlassFragment[]>([]);
-  const backgroundMeteorsRef = useRef<BackgroundMeteor[]>([]);
-  const energySparksRef = useRef<EnergySpark[]>([]);
-  const meteorSpawnIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  const meteorRef = useRef<{ x: number; y: number; active: boolean }>({
-    x: 0,
-    y: 0,
-    active: false,
-  });
-
-  const phaseRef = useRef<'starfield' | 'meteor' | 'impact' | 'crater' | 'complete'>('starfield');
-  const timeRef = useRef(0);
-  const impactTimeRef = useRef(0);
   const nextGlitchRef = useRef(0);
 
-  useEffect(() => {
-    buttonHoverRef.current = buttonHover;
-  }, [buttonHover]);
+  const handleImpact = () => {
+    setTimeout(() => setShowTitle(true), 1500);
+    setTimeout(() => setShowButton(true), 3000);
+  };
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d', { alpha: false });
-    if (!ctx) return;
-
-    const resize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    // Initialize stars across ENTIRE screen
-    const initStars = () => {
-      const stars: Star[] = [];
-      for (let i = 0; i < 400; i++) {
-        stars.push({
-          x: Math.random() * canvas.width,
-          y: Math.random() * canvas.height, // Full height coverage
-          size: Math.random() * 2.5 + 0.5,
-          brightness: Math.random() * 0.6 + 0.4,
-          twinkleSpeed: Math.random() * 0.03 + 0.01,
-          twinklePhase: Math.random() * Math.PI * 2,
-          shouldBePulled: Math.random() < 0.3, // Only 30% can be pulled
-        });
-      }
-      starsRef.current = stars;
-    };
-    initStars();
-
-    // Create explosion particles
-    const createExplosion = (x: number, y: number) => {
-      const particles: Particle[] = [];
-
-      // Main explosion particles (orange/yellow)
-      for (let i = 0; i < 200; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const speed = Math.random() * 15 + 5;
-        particles.push({
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          size: Math.random() * 4 + 2,
-          life: 1,
-          maxLife: Math.random() * 1.5 + 1,
-          color: {
-            r: 255,
-            g: Math.random() * 100 + 155,
-            b: Math.random() * 50
-          },
-        });
-      }
-
-      // Purple void particles
-      for (let i = 0; i < 150; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const speed = Math.random() * 8 + 3;
-        particles.push({
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          size: Math.random() * 3 + 1,
-          life: 1,
-          maxLife: Math.random() * 2 + 1.5,
-          color: {
-            r: Math.random() * 100 + 100,
-            g: Math.random() * 50 + 50,
-            b: Math.random() * 100 + 150
-          },
-        });
-      }
-
-      particlesRef.current = particles;
-    };
-
-    // Create shattered glass/reality effect
-    const createShatteredReality = (x: number, y: number) => {
-      const fragments: GlassFragment[] = [];
-      const fragmentCount = 40;
-
-      for (let i = 0; i < fragmentCount; i++) {
-        const angle = (Math.PI / 2) * (i / fragmentCount) - (Math.PI / 4);
-        const distance = Math.random() * 150 + 100;
-
-        const centerX = x + Math.cos(angle) * distance;
-        const centerY = y + Math.sin(angle) * distance;
-
-        // Create irregular polygon (glass shard)
-        const points: Array<{ x: number; y: number }> = [];
-        const sides = Math.floor(Math.random() * 3) + 4; // 4-6 sides
-        const size = Math.random() * 40 + 30;
-
-        for (let j = 0; j < sides; j++) {
-          const a = (Math.PI * 2 * j) / sides + Math.random() * 0.5;
-          const r = size * (0.5 + Math.random() * 0.5);
-          points.push({
-            x: Math.cos(a) * r,
-            y: Math.sin(a) * r,
-          });
-        }
-
-        fragments.push({
-          x: centerX,
-          y: centerY,
-          points,
-          velocity: {
-            x: (Math.random() - 0.5) * 0.3,
-            y: (Math.random() - 0.5) * 0.3,
-          },
-          rotation: Math.random() * Math.PI * 2,
-          rotationSpeed: (Math.random() - 0.5) * 0.02,
-          alpha: 0.7,
-          glowIntensity: Math.random() * 0.5 + 0.5,
-          pulsePhase: Math.random() * Math.PI * 2,
-        });
-      }
-
-      glassFragmentsRef.current = fragments;
-    };
-
-    // Spawn background meteor - MUCH LARGER AND FASTER
-    const spawnBackgroundMeteor = () => {
-      if (phaseRef.current !== 'crater' && phaseRef.current !== 'complete') return;
-
-      const side = Math.random();
-      let x, y, vx, vy;
-
-      if (side < 0.33) {
-        // From top left
-        x = Math.random() * canvas.width * 0.3;
-        y = -50;
-        vx = Math.random() * 4 + 3;
-        vy = Math.random() * 8 + 6;
-      } else if (side < 0.66) {
-        // From top right
-        x = canvas.width - Math.random() * canvas.width * 0.3;
-        y = -50;
-        vx = -(Math.random() * 4 + 3);
-        vy = Math.random() * 8 + 6;
-      } else {
-        // Diagonal across screen
-        if (Math.random() < 0.5) {
-          x = -50;
-          y = Math.random() * canvas.height * 0.3;
-          vx = Math.random() * 6 + 5;
-          vy = Math.random() * 6 + 4;
-        } else {
-          x = canvas.width + 50;
-          y = Math.random() * canvas.height * 0.3;
-          vx = -(Math.random() * 6 + 5);
-          vy = Math.random() * 6 + 4;
-        }
-      }
-
-      backgroundMeteorsRef.current.push({
-        x, y, vx, vy,
-        size: Math.random() * 8 + 10, // Much larger: 10-18px
-        life: 1,
-        burnProgress: 0,
-      });
-    };
-
-    // Create energy sparks for title
-    const createEnergySparks = (titleX: number, titleY: number) => {
-      if (Math.random() < 0.15) {
-        const sparkCount = Math.floor(Math.random() * 5) + 2;
-        for (let i = 0; i < sparkCount; i++) {
-          energySparksRef.current.push({
-            x: titleX + (Math.random() - 0.5) * 700,
-            y: titleY + (Math.random() - 0.5) * 100,
-            vx: (Math.random() - 0.5) * 6,
-            vy: (Math.random() - 0.5) * 6,
-            life: Math.random() * 0.7 + 0.5,
-          });
-        }
-      }
-    };
-
-    // Start meteor after 2 seconds
-    setTimeout(() => {
-      if (phaseRef.current === 'starfield') {
-        phaseRef.current = 'meteor';
-        meteorRef.current = {
-          x: canvas.width / 2,
-          y: -50,
-          active: true,
-        };
-      }
-    }, 2000);
-
-    // Animation loop
-    const animate = () => {
-      if (!ctx || !canvas) return;
-
-      timeRef.current += 0.016;
-
-      // Background
-      ctx.fillStyle = '#0a0a14';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Draw and update stars
-      starsRef.current.forEach((star) => {
-        star.twinklePhase += star.twinkleSpeed;
-        const twinkle = Math.sin(star.twinklePhase) * 0.3 + 0.7;
-        const alpha = Math.min(1.0, star.brightness * twinkle);
-
-        // Pull SOME stars toward meteor (only those marked shouldBePulled)
-        if (phaseRef.current === 'meteor' && meteorRef.current.active && star.shouldBePulled) {
-          const dx = star.x - meteorRef.current.x;
-          const dy = star.y - meteorRef.current.y;
-          const distance = Math.sqrt(dx * dx + dy * dy);
-
-          if (distance < 200 && star.y < meteorRef.current.y && !star.pulledByMeteor) {
-            star.pulledByMeteor = true;
-          }
-        }
-
-        if (star.pulledByMeteor) {
-          const dx = meteorRef.current.x - star.x;
-          const dy = meteorRef.current.y - star.y;
-          star.x += dx * 0.08;
-          star.y += dy * 0.08 + 4;
-        }
-
-        // Draw star
-        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-        ctx.beginPath();
-        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Glow
-        if (star.size > 1.5) {
-          const glowGradient = ctx.createRadialGradient(star.x, star.y, 0, star.x, star.y, star.size * 3);
-          glowGradient.addColorStop(0, `rgba(200, 220, 255, ${alpha * 0.4})`);
-          glowGradient.addColorStop(1, 'rgba(200, 220, 255, 0)');
-          ctx.fillStyle = glowGradient;
-          ctx.beginPath();
-          ctx.arc(star.x, star.y, star.size * 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      });
-
-      // Draw meteor
-      if (phaseRef.current === 'meteor' && meteorRef.current.active) {
-        const meteor = meteorRef.current;
-        meteor.y += 6;
-
-        // Meteor glow
-        const meteorGlow = ctx.createRadialGradient(meteor.x, meteor.y, 0, meteor.x, meteor.y, 60);
-        meteorGlow.addColorStop(0, 'rgba(255, 240, 200, 1)');
-        meteorGlow.addColorStop(0.3, 'rgba(255, 180, 100, 0.8)');
-        meteorGlow.addColorStop(0.6, 'rgba(255, 120, 60, 0.4)');
-        meteorGlow.addColorStop(1, 'rgba(255, 100, 50, 0)');
-        ctx.fillStyle = meteorGlow;
-        ctx.beginPath();
-        ctx.arc(meteor.x, meteor.y, 60, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Meteor core
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.arc(meteor.x, meteor.y, 15, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Trail particles
-        for (let i = 0; i < 8; i++) {
-          const trailY = meteor.y - (i * 30);
-          const trailSize = 25 - i * 2;
-          const trailAlpha = (8 - i) / 8;
-
-          const trailGradient = ctx.createRadialGradient(
-            meteor.x + (Math.random() - 0.5) * 10,
-            trailY,
-            0,
-            meteor.x,
-            trailY,
-            trailSize
-          );
-          trailGradient.addColorStop(0, `rgba(255, 200, 100, ${trailAlpha * 0.9})`);
-          trailGradient.addColorStop(0.5, `rgba(255, 120, 60, ${trailAlpha * 0.6})`);
-          trailGradient.addColorStop(1, `rgba(255, 80, 40, 0)`);
-
-          ctx.fillStyle = trailGradient;
-          ctx.beginPath();
-          ctx.arc(meteor.x, trailY, trailSize, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Impact
-        if (meteor.y >= canvas.height - 100) {
-          phaseRef.current = 'impact';
-          meteorRef.current.active = false;
-          impactTimeRef.current = timeRef.current;
-
-          createExplosion(canvas.width / 2, canvas.height);
-          createShatteredReality(canvas.width / 2, canvas.height);
-
-          setTimeout(() => {
-            setShowTitle(true);
-            nextGlitchRef.current = timeRef.current + Math.random() * 2 + 0.5;
-          }, 1500);
-
-          setTimeout(() => setShowButton(true), 3000);
-
-          // Start spawning background meteors - more frequently
-          meteorSpawnIntervalRef.current = setInterval(() => {
-            if (Math.random() < 0.7) spawnBackgroundMeteor();
-          }, 1500);
-        }
-      }
-
-      // Impact effects
-      if (phaseRef.current === 'impact' || phaseRef.current === 'crater' || phaseRef.current === 'complete') {
-        const timeSinceImpact = timeRef.current - impactTimeRef.current;
-
-        // Flash
-        if (timeSinceImpact < 0.3) {
-          const flashAlpha = Math.max(0, 1 - timeSinceImpact * 3.5);
-          ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-
-        // Massive shockwave rings
-        for (let ring = 0; ring < 3; ring++) {
-          const delay = ring * 0.15;
-          if (timeSinceImpact > delay && timeSinceImpact < delay + 2) {
-            const ringTime = timeSinceImpact - delay;
-            const shockwaveRadius = ringTime * 600;
-            const shockwaveAlpha = Math.max(0, 0.7 - ringTime * 0.4);
-
-            const shockGradient = ctx.createRadialGradient(
-              canvas.width / 2,
-              canvas.height,
-              Math.max(0, shockwaveRadius - 40),
-              canvas.width / 2,
-              canvas.height,
-              shockwaveRadius + 40
-            );
-            shockGradient.addColorStop(0, 'rgba(255, 200, 100, 0)');
-            shockGradient.addColorStop(0.5, `rgba(255, 150, 80, ${shockwaveAlpha})`);
-            shockGradient.addColorStop(1, 'rgba(255, 100, 50, 0)');
-
-            ctx.fillStyle = shockGradient;
-            ctx.beginPath();
-            ctx.arc(canvas.width / 2, canvas.height, shockwaveRadius, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-
-        // Update and draw explosion particles
-        particlesRef.current = particlesRef.current.filter(p => {
-          p.x += p.vx;
-          p.y += p.vy;
-          p.vy += 0.2; // Gravity
-          p.vx *= 0.98;
-          p.vy *= 0.98;
-          p.life -= 0.016 / p.maxLife;
-
-          if (p.life > 0) {
-            const alpha = p.life;
-            ctx.fillStyle = `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha})`;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Particle glow
-            const particleGlow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size * 2 * p.life);
-            particleGlow.addColorStop(0, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha * 0.5})`);
-            particleGlow.addColorStop(1, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, 0)`);
-            ctx.fillStyle = particleGlow;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size * 2 * p.life, 0, Math.PI * 2);
-            ctx.fill();
-
-            return true;
-          }
-          return false;
-        });
-
-        if (timeSinceImpact > 1) {
-          phaseRef.current = 'crater';
-        }
-      }
-
-      // Draw shattered glass/reality effect
-      if (phaseRef.current === 'crater' || phaseRef.current === 'complete') {
-        glassFragmentsRef.current.forEach(fragment => {
-          fragment.x += fragment.velocity.x;
-          fragment.y += fragment.velocity.y;
-          fragment.rotation += fragment.rotationSpeed;
-          fragment.pulsePhase += 0.03;
-
-          const pulse = Math.sin(fragment.pulsePhase) * 0.3 + 0.7;
-
-          ctx.save();
-          ctx.translate(fragment.x, fragment.y);
-          ctx.rotate(fragment.rotation);
-
-          // Draw glass fragment with multiple layers
-
-          // Outer glow
-          ctx.strokeStyle = `rgba(120, 80, 200, ${fragment.alpha * 0.4 * pulse})`;
-          ctx.lineWidth = 6;
-          ctx.lineJoin = 'miter';
-          ctx.beginPath();
-          fragment.points.forEach((point, i) => {
-            if (i === 0) ctx.moveTo(point.x, point.y);
-            else ctx.lineTo(point.x, point.y);
-          });
-          ctx.closePath();
-          ctx.stroke();
-
-          // Middle layer - brighter
-          ctx.strokeStyle = `rgba(180, 120, 255, ${fragment.alpha * 0.6 * pulse * fragment.glowIntensity})`;
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          fragment.points.forEach((point, i) => {
-            if (i === 0) ctx.moveTo(point.x, point.y);
-            else ctx.lineTo(point.x, point.y);
-          });
-          ctx.closePath();
-          ctx.stroke();
-
-          // Core white line
-          ctx.strokeStyle = `rgba(255, 255, 255, ${fragment.alpha * 0.8 * pulse})`;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          fragment.points.forEach((point, i) => {
-            if (i === 0) ctx.moveTo(point.x, point.y);
-            else ctx.lineTo(point.x, point.y);
-          });
-          ctx.closePath();
-          ctx.stroke();
-
-          // Fill with semi-transparent purple void
-          const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 50);
-          gradient.addColorStop(0, `rgba(100, 50, 150, ${fragment.alpha * 0.15 * pulse})`);
-          gradient.addColorStop(1, `rgba(80, 40, 120, ${fragment.alpha * 0.05 * pulse})`);
-          ctx.fillStyle = gradient;
-          ctx.beginPath();
-          fragment.points.forEach((point, i) => {
-            if (i === 0) ctx.moveTo(point.x, point.y);
-            else ctx.lineTo(point.x, point.y);
-          });
-          ctx.closePath();
-          ctx.fill();
-
-          ctx.restore();
-        });
-
-        // Crater glow with pulsing
-        const craterPulse = Math.sin(timeRef.current * 2) * 0.2 + 0.8;
-        const craterGradient = ctx.createRadialGradient(
-          canvas.width / 2,
-          canvas.height,
-          0,
-          canvas.width / 2,
-          canvas.height,
-          250
-        );
-        craterGradient.addColorStop(0, `rgba(120, 60, 180, ${0.4 * craterPulse})`);
-        craterGradient.addColorStop(0.5, `rgba(100, 50, 150, ${0.2 * craterPulse})`);
-        craterGradient.addColorStop(1, 'rgba(80, 40, 120, 0)');
-        ctx.fillStyle = craterGradient;
-        ctx.fillRect(0, canvas.height - 300, canvas.width, 300);
-      }
-
-      // Background meteors - MUCH MORE VISIBLE
-      backgroundMeteorsRef.current = backgroundMeteorsRef.current.filter(m => {
-        m.x += m.vx;
-        m.y += m.vy;
-        m.burnProgress += 0.015;
-
-        if (m.burnProgress < 1 && m.y < canvas.height - 150) {
-          // Long, bright trail
-          for (let i = 0; i < 10; i++) {
-            const trailX = m.x - m.vx * i * 5;
-            const trailY = m.y - m.vy * i * 5;
-            const trailAlpha = (1 - m.burnProgress) * (10 - i) / 10 * 0.8;
-            const trailSize = m.size * (1 - i * 0.08);
-
-            const trailGradient = ctx.createRadialGradient(trailX, trailY, 0, trailX, trailY, trailSize * 3);
-            trailGradient.addColorStop(0, `rgba(255, 240, 200, ${trailAlpha})`);
-            trailGradient.addColorStop(0.4, `rgba(255, 180, 120, ${trailAlpha * 0.7})`);
-            trailGradient.addColorStop(1, `rgba(255, 100, 50, 0)`);
-            ctx.fillStyle = trailGradient;
-            ctx.beginPath();
-            ctx.arc(trailX, trailY, trailSize * 3, 0, Math.PI * 2);
-            ctx.fill();
-          }
-
-          // Meteor body with glow
-          const meteorAlpha = 1 - m.burnProgress;
-          const bodyGlow = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.size * 2);
-          bodyGlow.addColorStop(0, `rgba(255, 255, 255, ${meteorAlpha})`);
-          bodyGlow.addColorStop(0.5, `rgba(255, 200, 150, ${meteorAlpha * 0.8})`);
-          bodyGlow.addColorStop(1, `rgba(255, 150, 100, 0)`);
-          ctx.fillStyle = bodyGlow;
-          ctx.beginPath();
-          ctx.arc(m.x, m.y, m.size * 2, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Core
-          ctx.fillStyle = `rgba(255, 240, 220, ${meteorAlpha})`;
-          ctx.beginPath();
-          ctx.arc(m.x, m.y, m.size, 0, Math.PI * 2);
-          ctx.fill();
-
-          return true;
-        }
-        return false;
-      });
-
-      // Energy sparks for title
-      if (showTitle) {
-        createEnergySparks(canvas.width / 2, canvas.height * 0.35);
-
-        energySparksRef.current = energySparksRef.current.filter(spark => {
-          spark.x += spark.vx;
-          spark.y += spark.vy;
-          spark.life -= 0.016;
-
-          if (spark.life > 0) {
-            const alpha = spark.life;
-
-            // Spark trail
-            ctx.fillStyle = `rgba(200, 150, 255, ${alpha * 0.3})`;
-            ctx.beginPath();
-            ctx.arc(spark.x, spark.y, 3, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Spark glow
-            const sparkGlow = ctx.createRadialGradient(spark.x, spark.y, 0, spark.x, spark.y, 10);
-            sparkGlow.addColorStop(0, `rgba(255, 200, 255, ${alpha})`);
-            sparkGlow.addColorStop(0.5, `rgba(220, 180, 255, ${alpha * 0.6})`);
-            sparkGlow.addColorStop(1, 'rgba(200, 150, 255, 0)');
-            ctx.fillStyle = sparkGlow;
-            ctx.beginPath();
-            ctx.arc(spark.x, spark.y, 10, 0, Math.PI * 2);
-            ctx.fill();
-
-            return true;
-          }
-          return false;
-        });
-
-        // Title glitch effect - update state to trigger re-render
-        if (timeRef.current > nextGlitchRef.current) {
-          setTitleGlitch({ active: true, intensity: Math.random() });
-          nextGlitchRef.current = timeRef.current + Math.random() * 3 + 1;
-          setTimeout(() => {
-            setTitleGlitch({ active: false, intensity: 0 });
-          }, 50 + Math.random() * 100);
-        }
-      }
-
-      animationRef.current = requestAnimationFrame(animate);
-    };
-
-    animate();
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-      if (meteorSpawnIntervalRef.current) {
-        clearInterval(meteorSpawnIntervalRef.current);
-      }
-    };
-  }, []);
+    if (!showTitle) return;
+
+    const interval = setInterval(() => {
+      setTitleGlitch({ active: true, intensity: Math.random() });
+      setTimeout(() => {
+        setTitleGlitch({ active: false, intensity: 0 });
+      }, 50 + Math.random() * 100);
+    }, 2000 + Math.random() * 2000);
+
+    return () => clearInterval(interval);
+  }, [showTitle]);
 
   return (
-    <div className="fixed inset-0 w-full h-full overflow-hidden bg-[#0a0a14]">
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0"
-        style={{ display: 'block', width: '100%', height: '100%' }}
-      />
+    <div className="fixed inset-0 w-full h-full overflow-hidden bg-black">
+      <Canvas
+        camera={{ position: [0, 0, 30], fov: 75 }}
+        gl={{ antialias: true, alpha: false }}
+      >
+        <Scene onImpact={handleImpact} />
+      </Canvas>
 
       {showTitle && (
         <div
@@ -729,7 +634,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
               fontFamily: "'Rubik Marker Hatch', cursive",
               fontSize: '1.5rem',
               color: 'white',
-              textShadow: buttonHoverRef.current
+              textShadow: buttonHover
                 ? `
                   0 0 20px rgba(200, 150, 255, 1),
                   0 0 40px rgba(150, 100, 220, 0.8),
@@ -741,7 +646,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
                   0 0 30px rgba(120, 80, 180, 0.6),
                   0 0 45px rgba(100, 60, 150, 0.4)
                 `,
-              filter: buttonHoverRef.current ? 'brightness(1.3)' : 'brightness(1)',
+              filter: buttonHover ? 'brightness(1.3)' : 'brightness(1)',
               letterSpacing: '0.15em',
             }}
           >
