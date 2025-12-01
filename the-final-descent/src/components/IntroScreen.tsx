@@ -29,7 +29,11 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
   const [showTitle, setShowTitle] = useState(false);
   const [showButton, setShowButton] = useState(false);
   const [buttonHover, setButtonHover] = useState(false);
+  const [canvasReady, setCanvasReady] = useState(false);
+  const [initFailed, setInitFailed] = useState(false);
   const animationRef = useRef<number | undefined>(undefined);
+  const buttonHoverRef = useRef(false);
+  const showButtonRef = useRef(false);
   const starsRef = useRef<Star[]>([]);
   const cracksRef = useRef<VoidCrack[]>([]);
   const meteorRef = useRef<{ x: number; y: number; active: boolean; pulledStars: Star[] }>({
@@ -43,26 +47,50 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
   const impactTimeRef = useRef(0);
 
   useEffect(() => {
-    console.log('IntroScreen mounted');
+    const previousOverflow = document.body.style.overflow;
+    const previousBackground = document.body.style.background;
+    document.body.style.overflow = 'hidden';
+    document.body.style.background = '#05050c';
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.background = previousBackground;
+    };
+  }, []);
+
+  useEffect(() => {
+    buttonHoverRef.current = buttonHover;
+  }, [buttonHover]);
+
+  useEffect(() => {
+    showButtonRef.current = showButton;
+  }, [showButton]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
       console.error('Canvas ref is null');
+      setInitFailed(true);
+      setShowTitle(true);
+      setShowButton(true);
       return;
     }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       console.error('Could not get 2d context');
+      setInitFailed(true);
+      setShowTitle(true);
+      setShowButton(true);
       return;
     }
 
-    console.log('Canvas context acquired');
+    setCanvasReady(true);
 
     // Set canvas size
     const resize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      console.log(`Canvas resized to ${canvas.width}x${canvas.height}`);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -84,8 +112,8 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
     };
     initStars();
 
-    // Start meteor after 2 seconds
-    setTimeout(() => {
+    // Start meteor quickly so the intro never feels blank
+    const meteorTimer = setTimeout(() => {
       if (phaseRef.current === 'starfield') {
         phaseRef.current = 'meteor';
         meteorRef.current = {
@@ -95,14 +123,22 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           pulledStars: [],
         };
       }
-    }, 2000);
+    }, 600);
+
+    // Fallback: show title/button even if animation stalls
+    const titleTimer = setTimeout(() => setShowTitle(true), 2800);
+    const buttonTimer = setTimeout(() => setShowButton(true), 3800);
 
     // Animation loop
     const animate = () => {
       if (!ctx || !canvas) return;
 
       timeRef.current += 0.016;
-      ctx.fillStyle = '#0a0a14';
+      const skyGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      skyGradient.addColorStop(0, '#0f1026');
+      skyGradient.addColorStop(0.45, '#0b0b19');
+      skyGradient.addColorStop(1, '#06060f');
+      ctx.fillStyle = skyGradient;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       // Draw and update stars
@@ -110,7 +146,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         // Twinkling effect
         star.twinklePhase += star.twinkleSpeed;
         const twinkle = Math.sin(star.twinklePhase) * 0.3 + 0.7;
-        const alpha = star.brightness * twinkle;
+        const alpha = Math.min(1, star.brightness * twinkle + 0.2);
 
         // Check if pulled by meteor
         if (phaseRef.current === 'meteor' && meteorRef.current.active) {
@@ -190,7 +226,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       // Draw meteor
       if (phaseRef.current === 'meteor' && meteorRef.current.active) {
         const meteor = meteorRef.current;
-        meteor.y += 4;
+        meteor.y += 6;
 
         // Meteor body
         const gradient = ctx.createRadialGradient(meteor.x, meteor.y, 0, meteor.x, meteor.y, 25);
@@ -320,7 +356,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       }
 
       // Draw ghostly trails on hover
-      if (buttonHover && showButton) {
+      if (buttonHoverRef.current && showButtonRef.current) {
         // Six stars representing the original expedition
         for (let i = 0; i < 6; i++) {
           const offsetX = (i - 2.5) * 80;
@@ -355,15 +391,41 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
+      clearTimeout(meteorTimer);
+      clearTimeout(titleTimer);
+      clearTimeout(buttonTimer);
     };
-  }, [buttonHover]);
+  }, []);
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-[#0a0a14]">
+    <div className="relative w-full h-screen overflow-hidden" style={{ background: 'linear-gradient(180deg, #0c0d1d 0%, #060610 65%, #04040a 100%)' }}>
       <canvas
         ref={canvasRef}
         className="absolute inset-0"
       />
+
+      {!canvasReady && !initFailed && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 bg-gradient-to-b from-black/30 via-transparent to-black/50">
+          <p className="text-lg font-semibold tracking-wide">Preparing the descent...</p>
+          <p className="text-sm text-slate-400 mt-2">If this screen stays empty, the button below will still let you begin.</p>
+        </div>
+      )}
+
+      {initFailed && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-200 bg-black/60 backdrop-blur-sm text-center px-6">
+          <p className="text-lg font-semibold">Canvas unavailable</p>
+          <p className="text-sm text-slate-400 mt-2 max-w-xl">
+            Your browser blocked the intro animation, but you can still start the expedition immediately below.
+          </p>
+        </div>
+      )}
+
+      <div className="absolute top-10 left-1/2 -translate-x-1/2 text-center max-w-2xl px-6 text-slate-200 drop-shadow-md">
+        <p className="text-lg font-semibold tracking-wide">Signal lost. Six souls vanished into the Abyss.</p>
+        <p className="text-sm text-slate-400 mt-1">
+          Watch the starfield coalesce. Once the impact stabilizes, begin your own descent to uncover their fate.
+        </p>
+      </div>
 
       {showTitle && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
@@ -385,6 +447,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           style={{ animation: 'fadeIn 1s ease-out' }}
         >
           <button
+            aria-label="Begin the descent"
             onClick={onBegin}
             onMouseEnter={() => setButtonHover(true)}
             onMouseLeave={() => setButtonHover(false)}
