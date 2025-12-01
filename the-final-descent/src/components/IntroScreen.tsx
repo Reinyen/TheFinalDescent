@@ -210,52 +210,75 @@ const RefractionShardFragmentShader = `
   uniform vec2 resolution;
   uniform float time;
   uniform float refractionStrength;
+  uniform float glitchAmount;
+  uniform float distanceFromCenter;
 
   varying vec3 vNormal;
   varying vec3 vPosition;
   varying vec2 vUv;
   varying vec4 vWorldPosition;
 
+  // Hash function for random numbers
+  float hash(float n) { return fract(sin(n) * 43758.5453123); }
+
   void main() {
     vec2 screenUV = gl_FragCoord.xy / resolution;
 
-    // Calculate refraction offset based on normal (stronger effect)
-    vec3 viewDir = normalize(cameraPosition - vWorldPosition.xyz);
-    vec3 refractDir = refract(viewDir, vNormal, 0.85);
-    vec2 refractOffset = refractDir.xy * refractionStrength * 0.08;
+    // Glitch effect - random offset and static
+    float glitchNoise = hash(floor(time * 10.0) + vPosition.x * 100.0);
+    vec2 glitchOffset = vec2(
+      (glitchNoise - 0.5) * glitchAmount * 0.02,
+      (hash(glitchNoise) - 0.5) * glitchAmount * 0.02
+    );
 
-    // Sample background with strong chromatic aberration
+    // Calculate refraction with glitch
+    vec3 viewDir = normalize(cameraPosition - vWorldPosition.xyz);
+    vec3 refractDir = refract(viewDir, vNormal, 0.90);
+    vec2 refractOffset = refractDir.xy * refractionStrength * 0.06 + glitchOffset;
+
+    // Sample background with chromatic aberration
     vec2 uv = screenUV + refractOffset;
-    float r = texture2D(tDiffuse, uv + refractOffset * 0.03).r;
+    float r = texture2D(tDiffuse, uv + refractOffset * 0.02).r;
     float g = texture2D(tDiffuse, uv).g;
-    float b = texture2D(tDiffuse, uv - refractOffset * 0.03).b;
+    float b = texture2D(tDiffuse, uv - refractOffset * 0.02).b;
 
     vec3 refractedColor = vec3(r, g, b);
 
-    // Strong edge highlight (Fresnel) with purple glow
-    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.5);
-    vec3 edgeGlow = vec3(0.8, 0.5, 1.0) * fresnel * 1.5;
+    // Dark crack edges
+    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.0);
+    vec3 edgeColor = vec3(0.05, 0.05, 0.1); // Dark edges
+    float edgeMask = smoothstep(0.85, 0.95, fresnel);
 
-    // Purple/blue tint for eerie effect with bright light behind
-    // Brighten the refracted color to simulate light shining through
-    vec3 brightRefracted = refractedColor * 1.8; // Much brighter
-    vec3 glassColor = mix(brightRefracted, brightRefracted * vec3(0.9, 0.85, 1.3), 0.3);
-
-    // Add shimmer effect with more intensity
-    float shimmer = sin(time * 2.0 + vPosition.x * 10.0 + vPosition.y * 10.0) * 0.15 + 0.95;
-    glassColor *= shimmer;
-
-    // Add bright "backlight" effect - stronger in center of shard
+    // Bright light through cracks - white/purple/blue
     vec2 centerDist = vUv - vec2(0.5);
-    float distFromCenter = length(centerDist);
-    float backlight = (1.0 - distFromCenter) * 0.6;
-    vec3 backlightColor = vec3(0.7, 0.6, 1.0) * backlight;
+    float distFromUVCenter = length(centerDist);
+    float lightThroughCracks = (1.0 - distFromUVCenter) * 0.8;
 
-    // Combine all effects
-    vec3 finalColor = glassColor + edgeGlow + backlightColor;
+    // Color cycle: white -> purple -> blue
+    vec3 lightColor = mix(
+      vec3(1.0, 1.0, 1.0), // White
+      mix(vec3(0.8, 0.4, 1.0), vec3(0.4, 0.6, 1.0), sin(time * 2.0) * 0.5 + 0.5), // Purple to Blue
+      0.5
+    );
+    vec3 crackLight = lightColor * lightThroughCracks;
 
-    // Higher opacity for better visibility
-    gl_FragColor = vec4(finalColor, 0.75 + fresnel * 0.25);
+    // Gradient fade based on distance from crater center
+    float fadeOut = smoothstep(1.0, 0.3, distanceFromCenter);
+
+    // Combine effects
+    vec3 finalColor = refractedColor * (1.0 - edgeMask * 0.7); // Slightly darken at edges
+    finalColor += crackLight * fadeOut;
+    finalColor = mix(finalColor, edgeColor, edgeMask * 0.8); // Dark cracks
+
+    // Static glitch overlay
+    float staticNoise = hash(gl_FragCoord.x + gl_FragCoord.y * 100.0 + time * 50.0);
+    finalColor += vec3(staticNoise * glitchAmount * 0.1);
+
+    // Variable opacity with fade and glitch flicker
+    float glitchFlicker = hash(floor(time * 20.0)) * glitchAmount;
+    float opacity = (0.6 + fresnel * 0.3) * fadeOut * (1.0 - glitchFlicker * 0.3);
+
+    gl_FragColor = vec4(finalColor, opacity);
   }
 `;
 
@@ -473,6 +496,8 @@ class SceneManager {
   shardsMeshes: THREE.Mesh[] = [];
   starfield: THREE.Points | null = null;
   starOriginalPositions: Float32Array | null = null;
+  starsToCapture: Set<number> = new Set(); // Indices of stars to pull into meteor
+  capturedStars: Set<number> = new Set(); // Stars that have been consumed
   craterGlow: THREE.Mesh | null = null;
   shockwaveRings: THREE.Mesh[] = [];
 
@@ -641,6 +666,39 @@ class SceneManager {
     if (this.meteorMesh) {
       this.meteorMesh.visible = true;
     }
+
+    // Select stars to capture (30% of stars within 30-80 unit range from meteor's starting position)
+    if (this.starfield && this.starOriginalPositions) {
+      const meteorStartPos = new THREE.Vector3(0, 100, -200);
+      const starCount = this.starOriginalPositions.length / 3;
+      const starsInRange: number[] = [];
+
+      for (let i = 0; i < starCount; i++) {
+        const x = this.starOriginalPositions[i * 3];
+        const y = this.starOriginalPositions[i * 3 + 1];
+        const z = this.starOriginalPositions[i * 3 + 2];
+
+        const dist = Math.sqrt(
+          Math.pow(x - meteorStartPos.x, 2) +
+          Math.pow(y - meteorStartPos.y, 2) +
+          Math.pow(z - meteorStartPos.z, 2)
+        );
+
+        if (dist >= 30 && dist <= 80) {
+          starsInRange.push(i);
+        }
+      }
+
+      // Select 30% of stars in range
+      const numToCapture = Math.ceil(starsInRange.length * 0.3);
+      for (let i = 0; i < numToCapture; i++) {
+        const randomIndex = Math.floor(Math.random() * starsInRange.length);
+        this.starsToCapture.add(starsInRange[randomIndex]);
+        starsInRange.splice(randomIndex, 1);
+      }
+
+      console.log(`Selected ${this.starsToCapture.size} stars to capture`);
+    }
   }
 
   createImpactEffects() {
@@ -700,24 +758,33 @@ class SceneManager {
   }
 
   createShatteredGlass() {
-    console.log('Creating shattered glass effect');
+    console.log('Creating shattered glass effect around crash site');
 
-    // Create two types of shards:
-    // 1. Full-screen shards that cover the entire view (distort starry background)
-    // 2. Localized shards around the impact point
+    // Create shards ONLY around impact point (0, -20, -170)
+    // Positioned to frame the "Begin the Descent" button area
+    const impactPoint = new THREE.Vector3(0, -20, -170);
+    const shardCount = 40;
 
-    // FULL-SCREEN SHARDS - Cover entire starry background with glass effect
-    const fullScreenShardCount = 30;
-    for (let i = 0; i < fullScreenShardCount; i++) {
+    // Create shards in expanding rings with gradient fade
+    for (let i = 0; i < shardCount; i++) {
+      const ring = Math.floor(i / 13); // 3 rings
+      const ringRadius = 12 + ring * 10; // 12, 22, 32 units
+      const angle = (i / 13) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+
+      const distFromCenter = ringRadius + (Math.random() - 0.5) * 6;
+      const pointX = Math.cos(angle) * distFromCenter;
+      const pointZ = Math.sin(angle) * distFromCenter;
+
+      // Create irregular polygon shard
       const sides = 5 + Math.floor(Math.random() * 3);
       const shape = new THREE.Shape();
-      const size = 15 + Math.random() * 25; // Large shards
+      const size = 5 + Math.random() * 4;
 
       for (let j = 0; j < sides; j++) {
-        const angle = (j / sides) * Math.PI * 2 + (Math.random() - 0.5) * 0.8;
-        const r = size * (0.4 + Math.random() * 0.6);
-        const x = Math.cos(angle) * r;
-        const y = Math.sin(angle) * r;
+        const vertAngle = (j / sides) * Math.PI * 2 + (Math.random() - 0.5) * 0.6;
+        const r = size * (0.5 + Math.random() * 0.5);
+        const x = Math.cos(vertAngle) * r;
+        const y = Math.sin(vertAngle) * r;
 
         if (j === 0) shape.moveTo(x, y);
         else shape.lineTo(x, y);
@@ -725,96 +792,39 @@ class SceneManager {
       shape.closePath();
 
       const geometry = new THREE.ShapeGeometry(shape);
+
+      // Calculate distance from crater center for fade gradient (0 to 1)
+      const normalizedDist = Math.min(distFromCenter / 40, 1.0);
+
       const material = new THREE.ShaderMaterial({
         uniforms: {
           tDiffuse: { value: null },
           resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
           time: { value: 0 },
-          refractionStrength: { value: 5.0 }, // Very strong refraction
+          refractionStrength: { value: 4.0 },
+          glitchAmount: { value: 0.5 },
+          distanceFromCenter: { value: normalizedDist },
         },
         vertexShader: RefractionShardVertexShader,
         fragmentShader: RefractionShardFragmentShader,
         transparent: true,
         side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
+        blending: THREE.NormalBlending, // Normal blending to preserve stars
       });
 
       const mesh = new THREE.Mesh(geometry, material);
-
-      // Position in a grid pattern across the view, close to camera
-      const gridX = (i % 6) - 2.5;
-      const gridY = Math.floor(i / 6) - 2;
-      mesh.position.set(gridX * 20, gridY * 15, 15); // Close to camera (z=15)
-      mesh.rotation.x = (Math.random() - 0.5) * 0.3;
-      mesh.rotation.y = (Math.random() - 0.5) * 0.3;
+      mesh.position.set(impactPoint.x + pointX, impactPoint.y, impactPoint.z + pointZ);
+      mesh.rotation.x = -Math.PI / 2 + (Math.random() - 0.5) * 0.3;
       mesh.rotation.z = Math.random() * Math.PI * 2;
       mesh.scale.set(0, 0, 0);
       mesh.visible = false;
       mesh.userData.targetScale = 1.0;
       mesh.userData.rotationSpeed = (Math.random() - 0.5) * 1.5;
-      mesh.userData.isFullScreen = true;
+      mesh.userData.basePosition = mesh.position.clone();
+      mesh.userData.glitchPhase = Math.random() * Math.PI * 2;
 
       this.shardsMeshes.push(mesh);
       this.scene.add(mesh);
-    }
-
-    // LOCALIZED SHARDS - Around impact point for depth
-    const localShardCount = 30;
-    const impactCenter = new THREE.Vector2(0, -170);
-
-    for (let ring = 0; ring < 3; ring++) {
-      const shardsInRing = Math.floor(localShardCount / 3);
-      const ringRadius = 15 + ring * 12;
-
-      for (let i = 0; i < shardsInRing; i++) {
-        const sides = 5 + Math.floor(Math.random() * 3);
-        const shape = new THREE.Shape();
-        const size = 4 + Math.random() * 3;
-
-        for (let j = 0; j < sides; j++) {
-          const angle = (j / sides) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
-          const r = size * (0.5 + Math.random() * 0.5);
-          const x = Math.cos(angle) * r;
-          const y = Math.sin(angle) * r;
-
-          if (j === 0) shape.moveTo(x, y);
-          else shape.lineTo(x, y);
-        }
-        shape.closePath();
-
-        const geometry = new THREE.ShapeGeometry(shape);
-        const material = new THREE.ShaderMaterial({
-          uniforms: {
-            tDiffuse: { value: null },
-            resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-            time: { value: 0 },
-            refractionStrength: { value: 3.5 },
-          },
-          vertexShader: RefractionShardVertexShader,
-          fragmentShader: RefractionShardFragmentShader,
-          transparent: true,
-          side: THREE.DoubleSide,
-          blending: THREE.AdditiveBlending,
-        });
-
-        const mesh = new THREE.Mesh(geometry, material);
-        const angle = (i / shardsInRing) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
-        const distance = ringRadius + (Math.random() - 0.5) * 8;
-        const pointX = impactCenter.x + Math.cos(angle) * distance;
-        const pointZ = impactCenter.y + Math.sin(angle) * distance;
-
-        mesh.position.set(pointX, -20, pointZ);
-        mesh.rotation.x = -Math.PI / 2 + (Math.random() - 0.5) * 0.4;
-        mesh.rotation.z = Math.random() * Math.PI * 2;
-        mesh.scale.set(0, 0, 0);
-        mesh.visible = false;
-        mesh.userData.targetScale = 1.0;
-        mesh.userData.rotationSpeed = (Math.random() - 0.5) * 2;
-        mesh.userData.isFullScreen = false;
-
-        this.shardsMeshes.push(mesh);
-        this.scene.add(mesh);
-      }
     }
   }
 
@@ -850,17 +860,20 @@ class SceneManager {
       this.meteorMesh.rotation.x += deltaTime * 2.5;
       this.meteorMesh.rotation.y += deltaTime * 1.8;
 
-      // Dramatic perspective scaling - starts VERY tiny, grows to VERY big
-      // Base growth from 0.01 to 1.5 over the first 2 seconds
-      let scale = 0.01 + progress * 1.49;
-
-      // In the LAST SECOND (elapsed >= 2.0), grow explosively to 3.0x
-      // This is when meteor is closest and appears to rush at viewer
-      if (elapsed >= 2.0) {
-        const lastSecondProgress = Math.min((elapsed - 2.0) / 1.0, 1.0);
-        // Exponential growth for dramatic final approach
-        const explosiveGrowth = Math.pow(lastSecondProgress, 0.5); // Square root for fast initial growth
-        scale = 1.5 + explosiveGrowth * 1.5; // Grows from 1.5 to 3.0
+      // Meteor growth: tiny dot for 2s, then explosive growth in last 1s
+      // First 2 seconds (elapsed 0-2): very slow growth 0.01 → 0.15
+      // Last second (elapsed 2-3): explosive growth 0.15 → 10 (1/12 screen width)
+      let scale;
+      if (elapsed < 2.0) {
+        // Slow, barely noticeable growth for first 2 seconds
+        const firstTwoProgress = elapsed / 2.0;
+        scale = 0.01 + firstTwoProgress * 0.14; // 0.01 to 0.15
+      } else {
+        // Last second: dramatic exponential growth
+        const lastSecondProgress = (elapsed - 2.0) / 1.0;
+        // Exponential curve for "OH MY GOD IT'S HUGE" effect
+        const explosiveGrowth = Math.pow(lastSecondProgress, 0.4);
+        scale = 0.15 + explosiveGrowth * 9.85; // 0.15 to 10
       }
 
       this.meteorMesh.scale.set(scale, scale, scale);
@@ -879,42 +892,42 @@ class SceneManager {
       this.trailSystem.emit(this.meteorMesh.position, velocity, Math.floor(15 * trailDensity), 'ember');
       this.trailSystem.emit(this.meteorMesh.position, velocity, Math.floor(10 * trailDensity), 'smoke');
 
-      // Gravitational star pull effect - visibly attract nearby stars
+      // Star capture effect - pull selected stars into meteor and make them disappear
       if (this.starfield && this.starOriginalPositions) {
         const positions = this.starfield.geometry.attributes.position.array as Float32Array;
+        const sizes = this.starfield.geometry.attributes.size.array as Float32Array;
         const meteorPos = this.meteorMesh.position;
 
-        // Much stronger pull that increases dramatically as meteor descends
-        const pullStrength = 0.8 * Math.pow(progress, 1.5);
+        this.starsToCapture.forEach((starIndex) => {
+          if (this.capturedStars.has(starIndex)) return; // Already consumed
 
-        for (let i = 0; i < positions.length; i += 3) {
-          const origX = this.starOriginalPositions[i];
-          const origY = this.starOriginalPositions[i + 1];
-          const origZ = this.starOriginalPositions[i + 2];
+          const i = starIndex * 3;
+          const origX = this.starOriginalPositions![i];
+          const origY = this.starOriginalPositions![i + 1];
+          const origZ = this.starOriginalPositions![i + 2];
 
           const dx = meteorPos.x - origX;
           const dy = meteorPos.y - origY;
           const dz = meteorPos.z - origZ;
           const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-          // Pull stars within much larger radius (150 units)
-          if (dist < 150) {
-            // Inverse square falloff for realistic gravity
-            const distanceFactor = 1 - (dist / 150);
-            const pullFactor = distanceFactor * distanceFactor * pullStrength;
+          // Move star toward meteor - closer stars move faster
+          const speed = deltaTime * 40 * (1 / (dist * 0.1 + 1)); // Inverse distance for speed
+          const moveAmount = Math.min(speed / dist, 1.0);
 
-            positions[i] = origX + dx * pullFactor * 0.5;
-            positions[i + 1] = origY + dy * pullFactor * 0.5;
-            positions[i + 2] = origZ + dz * pullFactor * 0.5;
-          } else {
-            // Return to original position
-            positions[i] = origX;
-            positions[i + 1] = origY;
-            positions[i + 2] = origZ;
+          positions[i] += dx * moveAmount;
+          positions[i + 1] += dy * moveAmount;
+          positions[i + 2] += dz * moveAmount;
+
+          // If star is very close to meteor, hide it (consumed)
+          if (dist < 3) {
+            sizes[starIndex] = 0; // Hide the star
+            this.capturedStars.add(starIndex);
           }
-        }
+        });
 
         this.starfield.geometry.attributes.position.needsUpdate = true;
+        this.starfield.geometry.attributes.size.needsUpdate = true;
       }
 
       // Impact detection - when meteor reaches ground
@@ -980,11 +993,10 @@ class SceneManager {
         this.craterGlow.scale.set(pulse, pulse, 1);
       }
 
-      // Show shards with staggered timing and dramatic entrance
+      // Show shards with staggered timing and glitch effects
       if (impactElapsed > 0.05) {
         this.shardsMeshes.forEach((shard, i) => {
-          const isFullScreen = shard.userData.isFullScreen;
-          const shardDelay = isFullScreen ? i * 0.003 : i * 0.008; // Full-screen shards appear faster
+          const shardDelay = i * 0.005;
 
           if (impactElapsed > 0.05 + shardDelay) {
             shard.visible = true;
@@ -992,29 +1004,29 @@ class SceneManager {
             const shardElapsed = impactElapsed - (0.05 + shardDelay);
 
             // Dramatic scale-in with easing
-            const scaleProgress = Math.min(shardElapsed / 0.3, 1.0);
+            const scaleProgress = Math.min(shardElapsed / 0.25, 1.0);
             const easedScale = 1.0 - Math.pow(1.0 - scaleProgress, 3); // Cubic ease-out
             const currentScale = easedScale * shard.userData.targetScale;
             shard.scale.set(currentScale, currentScale, currentScale);
 
-            if (isFullScreen) {
-              // Full-screen shards: just rotate and shimmer in place
-              shard.rotation.z += deltaTime * shard.userData.rotationSpeed * 0.5;
-              shard.rotation.x += deltaTime * shard.userData.rotationSpeed * 0.2;
-              shard.rotation.y += deltaTime * shard.userData.rotationSpeed * 0.3;
-            } else {
-              // Localized shards: float upward with wobble
-              const baseY = -20;
-              const floatHeight = shardElapsed * 0.4;
-              const wobble = Math.sin(shardElapsed * 3 + i * 0.5) * 0.2;
-              shard.position.y = baseY + floatHeight + wobble;
-              shard.rotation.z += deltaTime * shard.userData.rotationSpeed;
-            }
+            // Glitch effect - random position jitter
+            const glitchIntensity = 0.5 + Math.sin(this.timeline.time * 15 + shard.userData.glitchPhase) * 0.5;
+            const jitterX = (Math.random() - 0.5) * glitchIntensity * 0.3;
+            const jitterZ = (Math.random() - 0.5) * glitchIntensity * 0.3;
 
-            // Update shader time uniform for shimmer effect
+            shard.position.x = shard.userData.basePosition.x + jitterX;
+            shard.position.z = shard.userData.basePosition.z + jitterZ;
+
+            // Slow rotation
+            shard.rotation.z += deltaTime * shard.userData.rotationSpeed * 0.3;
+
+            // Update shader uniforms for time and glitch
             const material = shard.material as THREE.ShaderMaterial;
             if (material.uniforms.time) {
               material.uniforms.time.value = this.timeline.time;
+            }
+            if (material.uniforms.glitchAmount) {
+              material.uniforms.glitchAmount.value = glitchIntensity;
             }
           }
         });
@@ -1038,26 +1050,27 @@ class SceneManager {
         material.opacity = 0.85;
       }
 
-      // Continue animating shards
+      // Continue animating shards with glitch effects
       this.shardsMeshes.forEach((shard, i) => {
         if (shard.visible) {
-          const isFullScreen = shard.userData.isFullScreen;
+          // Continuous glitch effect - random position jitter
+          const glitchIntensity = 0.3 + Math.sin(this.timeline.time * 12 + shard.userData.glitchPhase) * 0.3;
+          const jitterX = (Math.random() - 0.5) * glitchIntensity * 0.25;
+          const jitterZ = (Math.random() - 0.5) * glitchIntensity * 0.25;
 
-          if (isFullScreen) {
-            // Full-screen shards: continuous slow rotation creating shifting distortion
-            shard.rotation.z += deltaTime * shard.userData.rotationSpeed * 0.4;
-            shard.rotation.x += deltaTime * shard.userData.rotationSpeed * 0.15;
-            shard.rotation.y += deltaTime * shard.userData.rotationSpeed * 0.25;
-          } else {
-            // Localized shards: gentle floating motion
-            shard.position.y += Math.sin(this.timeline.time + i * 0.5) * deltaTime * 0.1;
-            shard.rotation.z += deltaTime * shard.userData.rotationSpeed * 0.3;
-          }
+          shard.position.x = shard.userData.basePosition.x + jitterX;
+          shard.position.z = shard.userData.basePosition.z + jitterZ;
 
-          // Update shader time for all shards
+          // Slow rotation
+          shard.rotation.z += deltaTime * shard.userData.rotationSpeed * 0.25;
+
+          // Update shader time and glitch
           const material = shard.material as THREE.ShaderMaterial;
           if (material.uniforms.time) {
             material.uniforms.time.value = this.timeline.time;
+          }
+          if (material.uniforms.glitchAmount) {
+            material.uniforms.glitchAmount.value = glitchIntensity;
           }
         }
       });
