@@ -3,38 +3,28 @@
  * Phase 3: Full game loop with map, nodes, and combat integration
  */
 
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRunStore } from './store/runStore';
 import { useCombatStore } from './store/combatStore';
 import { getAvailableNodes } from './engine/mapGenerator';
 import { applyMemoryHealing, applyHazardDamage } from './engine/nodeResolver';
-import { getAllCharacters } from './data/characters';
+import { getAllCharacters, getRandomCharacters } from './data/characters';
+import { getCharacterAbilities } from './data/abilities';
+import type { Ability, Item } from './types/core';
 import type { NodeChoice } from './engine/nodeResolver';
-import type { Item } from './types/core';
 import { IntroScreen } from './components/IntroScreen';
+import { RosterVFX, type RosterFxHandle } from './components/RosterVFX';
 import './App.css';
 
 function App() {
   const [gamePhase, setGamePhase] = useState<'intro' | 'party_select' | 'map' | 'node' | 'combat'>('intro');
-  const [selectedCharacters, setSelectedCharacters] = useState<string[]>([]);
 
   const runStore = useRunStore();
   const combatStore = useCombatStore();
 
-  // Party Selection
-  const handleCharacterToggle = (characterId: string) => {
-    if (selectedCharacters.includes(characterId)) {
-      setSelectedCharacters(selectedCharacters.filter(id => id !== characterId));
-    } else if (selectedCharacters.length < 3) {
-      setSelectedCharacters([...selectedCharacters, characterId]);
-    }
-  };
-
-  const handleStartRun = () => {
-    if (selectedCharacters.length === 3) {
-      runStore.startRun(selectedCharacters);
-      setGamePhase('map');
-    }
+  const handleRosterConfirmed = (livingRoster: string[]) => {
+    runStore.startRun(livingRoster);
+    setGamePhase('map');
   };
 
   // Map Navigation
@@ -102,11 +92,7 @@ function App() {
   }
 
   if (gamePhase === 'party_select') {
-    return <PartySelectScreen
-      selectedCharacters={selectedCharacters}
-      onCharacterToggle={handleCharacterToggle}
-      onStartRun={handleStartRun}
-    />;
+    return <PartySelectScreen onConfirmRoster={handleRosterConfirmed} />;
   }
 
   if (gamePhase === 'combat') {
@@ -131,60 +117,397 @@ function App() {
 // ============================================================================
 
 function PartySelectScreen({
-  selectedCharacters,
-  onCharacterToggle,
-  onStartRun,
+  onConfirmRoster,
 }: {
-  selectedCharacters: string[];
-  onCharacterToggle: (id: string) => void;
-  onStartRun: () => void;
+  onConfirmRoster: (livingRoster: string[]) => void;
 }) {
-  const characters = getAllCharacters();
+  const characters = useMemo(() => getAllCharacters(), []);
+  const [livingRoster, setLivingRoster] = useState<string[]>([]);
+  const [fallenRoster, setFallenRoster] = useState<string[]>([]);
+  const [selectedForReroll, setSelectedForReroll] = useState<string | null>(null);
+  const [rerolls, setRerolls] = useState(3);
+  const [locked, setLocked] = useState(false);
+  const [toast, setToast] = useState('');
+  const [introPlayed, setIntroPlayed] = useState(false);
+  const flickerTimer = useRef<number | null>(null);
+  const [popoverState, setPopoverState] = useState<{
+    id: string;
+    left: number;
+    top: number;
+  } | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const fallenRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const rerollStarsRef = useRef<HTMLDivElement | null>(null);
+  const fxRef = useRef<RosterFxHandle | null>(null);
+
+  useEffect(() => {
+    initializeRosters();
+  }, []);
+
+  useEffect(() => {
+    const scheduleFlicker = () => {
+      const delay = 20000 + Math.random() * 10000;
+      if (flickerTimer.current) window.clearTimeout(flickerTimer.current);
+      flickerTimer.current = window.setTimeout(() => {
+        document.querySelectorAll('.fallen').forEach(el => {
+          el.classList.add('flicker');
+          window.setTimeout(() => el.classList.remove('flicker'), 1200);
+        });
+        scheduleFlicker();
+      }, delay);
+    };
+
+    scheduleFlicker();
+    return () => {
+      if (flickerTimer.current) window.clearTimeout(flickerTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    };
+  }, []);
+
+  const initializeRosters = () => {
+    const living = getRandomCharacters(3).map(c => c.id);
+    const fallen = characters
+      .map(c => c.id)
+      .filter(id => !living.includes(id));
+
+    setLivingRoster(living);
+    setFallenRoster(fallen);
+    setSelectedForReroll(null);
+    setRerolls(3);
+    setIntroPlayed(false);
+  };
+
+  const showToast = (message: string) => {
+    setToast(message);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(''), 1500);
+  };
+
+  const abilityBriefs: Record<string, string> = {
+    bonebreaker_mace: 'Heavy strike; may weaken enemy damage output.',
+    final_vow: 'Draws attention and shields self with a bulwark.',
+    undying_judgment: 'Crushing verdict that can steady Dranick if bleeding.',
+    twin_thorns: 'Fast cut that leaves the enemy bleeding.',
+    burrow_buddy: 'Evasive setup that speeds Eline for a follow-up.',
+    marsh_ambush: 'Punishes DoT-afflicted foes; chance to slow.',
+    arc_lash: 'Arc strike that chains to a nearby enemy.',
+    spell_parry: 'Brief arcane guard that reflects part of the blow.',
+    gravemark_seal: 'Marks the target so all damage bites deeper.',
+    future_flare: 'Tags a foe; the next hit spikes harder.',
+    foresight_step: 'Tempo boost that sharpens speed and evasion.',
+    rewind_pulse: 'Party-wide rewind that heals and scrubs a debuff.',
+    pressure_point_strike: 'Precise hit that exposes the target.',
+    breath: 'Quick single-target heal that can add gentle regen.',
+    red_thread: 'Major heal that redirects risk back to Lira.',
+    soilcrack_fist: 'Brutal blow that costs Grim some blood.',
+    fury_guard: 'Rage armor with a self-inflicted toll.',
+    relic_howl: 'Wide howl that chills enemy speed.',
+  };
+
+  const handleSingleReroll = async () => {
+    if (!selectedForReroll || rerolls < 2 || locked) return;
+
+    const replacementPool = characters
+      .map(c => c.id)
+      .filter(id => !livingRoster.includes(id));
+    if (!replacementPool.length) return;
+
+    const replacementId = replacementPool[Math.floor(Math.random() * replacementPool.length)];
+    const nextLiving = livingRoster.map(id => (id === selectedForReroll ? replacementId : id));
+    const nextFallen = characters
+      .map(c => c.id)
+      .filter(id => !nextLiving.includes(id));
+
+    const cardRect = cardRefs.current[selectedForReroll]?.getBoundingClientRect();
+    const starRect = rerollStarsRef.current?.getBoundingClientRect();
+
+    setLocked(true);
+    setRerolls(r => r - 2);
+    showToast('Rerolling one soul…');
+
+    if (fxRef.current?.playSingleReroll) {
+      await fxRef.current.playSingleReroll(cardRect, starRect);
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 700));
+    }
+
+    setLivingRoster(nextLiving);
+    setFallenRoster(nextFallen);
+    setSelectedForReroll(null);
+    setLocked(false);
+    showToast('Fate rewrites the star.');
+  };
+
+  const handleTotalReroll = async () => {
+    if (rerolls < 1 || locked) return;
+
+    const nextLiving = getRandomCharacters(3).map(c => c.id);
+    const nextFallen = characters
+      .map(c => c.id)
+      .filter(id => !nextLiving.includes(id));
+
+    const cardRects = livingRoster
+      .map(id => cardRefs.current[id]?.getBoundingClientRect())
+      .filter(Boolean) as DOMRect[];
+    const starRect = rerollStarsRef.current?.getBoundingClientRect();
+
+    setLocked(true);
+    setRerolls(r => r - 1);
+    showToast('Total reroll…');
+
+    if (fxRef.current?.playTotalReroll) {
+      await fxRef.current.playTotalReroll(cardRects, starRect);
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 750));
+    }
+
+    setLivingRoster(nextLiving);
+    setFallenRoster(nextFallen);
+    setSelectedForReroll(null);
+    setLocked(false);
+    showToast('The heavens reshuffle.');
+  };
+
+  const handleConfirm = () => {
+    if (livingRoster.length === 3 && !locked) {
+      onConfirmRoster(livingRoster);
+    }
+  };
+
+  const formatAbilityMeta = (ability: Ability) => {
+    const desc = abilityBriefs[ability.id];
+    const parts: string[] = desc ? [desc] : [];
+    parts.push(`${ability.spCost} SP`);
+    parts.push(ability.abilityType);
+    parts.push(ability.targetType.replace(/_/g, ' '));
+    if (ability.tags?.length) parts.push(`Tags: ${ability.tags.join(', ')}`);
+    return parts.join(' • ');
+  };
+
+  const openPopover = (id: string, target: HTMLDivElement) => {
+    const pad = 10;
+    const rect = target.getBoundingClientRect();
+    const popWidth = Math.min(360, window.innerWidth - 24);
+    const popHeight = 260;
+    let left = rect.right + 14;
+    let top = rect.top + 10;
+
+    if (left + popWidth + pad > window.innerWidth) {
+      left = rect.left - 14 - popWidth;
+    }
+    if (top + popHeight + pad > window.innerHeight) {
+      top = window.innerHeight - popHeight - pad;
+    }
+    if (top < pad) top = pad;
+    if (left < pad) left = pad;
+
+    setPopoverState({ id, left: Math.round(left), top: Math.round(top) });
+  };
+
+  const closePopover = () => setPopoverState(null);
+
+  const gatherAnchors = useCallback(
+    () => ({
+      living: livingRoster.map(id => cardRefs.current[id]?.getBoundingClientRect() ?? null),
+      fallen: fallenRoster.map(id => fallenRefs.current[id]?.getBoundingClientRect() ?? null),
+    }),
+    [fallenRoster, livingRoster],
+  );
+
+  const playTransition = async () => {
+    if (locked) return;
+    setLocked(true);
+    if (fxRef.current?.playIntro) {
+      const anchors = gatherAnchors();
+      await fxRef.current.playIntro(livingRoster, fallenRoster, anchors);
+    }
+    setLocked(false);
+  };
+
+  const getCharacter = (id: string) => characters.find(c => c.id === id)!;
+  const abilityListFor = (id: string) => getCharacterAbilities(id);
+
+  useEffect(() => {
+    if (livingRoster.length === 3 && fallenRoster.length === 3 && !introPlayed) {
+      setLocked(true);
+      const anchors = gatherAnchors();
+      const introPromise = fxRef.current?.playIntro(livingRoster, fallenRoster, anchors) ?? Promise.resolve();
+      introPromise.finally(() => {
+        setLocked(false);
+        setIntroPlayed(true);
+      });
+    }
+  }, [fallenRoster, gatherAnchors, introPlayed, livingRoster]);
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white p-8">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-4xl font-bold mb-2 text-center">The Final Descent</h1>
-        <p className="text-xl text-center text-gray-400 mb-8">
-          Select 3 characters for your expedition
-        </p>
+    <div className="roster-screen">
+      <div className="fx-layer" aria-hidden="true">
+        <RosterVFX ref={fxRef} />
+        <div className="vignette"></div>
+      </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
-          {characters.map(char => (
-            <button
-              key={char.id}
-              onClick={() => onCharacterToggle(char.id)}
-              className={`p-4 rounded-lg border-2 transition ${
-                selectedCharacters.includes(char.id)
-                  ? 'border-blue-500 bg-blue-900'
-                  : 'border-gray-600 bg-slate-800 hover:border-gray-400'
-              }`}
-            >
-              <div className="font-bold text-lg">{char.name}</div>
-              <div className="text-sm text-gray-400">{char.role}</div>
-              <div className="text-xs mt-2">
-                HP: {char.baseStats.hp} | CON: {char.baseStats.con} | SPD: {char.baseStats.spd}
+      <div className="ui-layer">
+        <div className="screen" role="application" aria-label="Roster Selection">
+          <header className="title-area">
+            <div className="title-block">
+              <div className="kicker">The Final Descent</div>
+              <h1 className="title">Choose the stars that still burn.</h1>
+              <div className="sub">Hover a living soul to read their gifts. Click a living card to mark it for reroll.</div>
+            </div>
+            <div className="top-actions">
+              <button className="mini-btn" onClick={playTransition} title="Replays a simplified transition mockup">
+                Replay Transition
+              </button>
+            </div>
+          </header>
+
+          <main className="living-area">
+            <div className="living-row">
+              {livingRoster.map((id, idx) => {
+                const char = getCharacter(id);
+                return (
+                  <div
+                    key={id}
+                    className={`card ${selectedForReroll === id ? 'selected' : ''}`}
+                    style={{ ['--rot' as string]: `${(idx - 1) * 1.8}deg` }}
+                    data-id={id}
+                    ref={el => {
+                      cardRefs.current[id] = el;
+                    }}
+                    onClick={() => {
+                      if (locked) return;
+                      setSelectedForReroll(prev => (prev === id ? null : id));
+                    }}
+                    onMouseEnter={e => {
+                      if (locked) return;
+                      openPopover(id, e.currentTarget);
+                    }}
+                    onMouseMove={e => {
+                      if (!popoverState || popoverState.id !== id) return;
+                      openPopover(id, e.currentTarget);
+                    }}
+                    onMouseLeave={closePopover}
+                  >
+                    <div className="glow"></div>
+                    <div className="marked">
+                      <span className="sigil-dot"></span>
+                      <span>MARKED</span>
+                    </div>
+                    <div className="card-body">
+                      <div>
+                        <p className="role">{char.role}</p>
+                        <h2 className="name">{char.name}</h2>
+                        <div className="divider"></div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </main>
+
+          <section className="bottom-area">
+            <div className="fallen-block">
+              <div className="fallen-row">
+                {fallenRoster.map((id, idx) => {
+                  const char = getCharacter(id);
+                  return (
+                    <div
+                      key={id}
+                      className="fallen"
+                      style={{ ['--frot' as string]: `${(idx - 1) * 1.4}deg` }}
+                      ref={el => {
+                        fallenRefs.current[id] = el;
+                      }}
+                    >
+                      <div className="fallen-name">{char.name}</div>
+                    </div>
+                  );
+                })}
               </div>
-            </button>
-          ))}
+              <div className="meta-lines">
+                <div className="rerolls">
+                  <div className="label">Celestial Rerolls:</div>
+                  <div className="stars" ref={rerollStarsRef}>
+                    {[0, 1, 2].map(idx => (
+                      <div key={idx} className={`star ${idx >= rerolls ? 'spent' : ''}`}>⭐</div>
+                    ))}
+                  </div>
+                </div>
+                <div className="hint">
+                  <b>Single Reroll</b> replaces <b>one</b> marked Living soul (cost: <b>2</b>).<br />
+                  <b>Total Reroll</b> replaces <b>all three</b> Living souls (cost: <b>1</b>).
+                </div>
+              </div>
+            </div>
+
+            <div className="actions">
+              <div className="btn-row">
+                <button className="btn" onClick={handleSingleReroll} disabled={!selectedForReroll || rerolls < 2 || locked}>
+                  Reroll Selected
+                  <small>Cost: 2 • Requires a marked card</small>
+                </button>
+                <button className="btn" onClick={handleTotalReroll} disabled={rerolls < 1 || locked}>
+                  Total Reroll
+                  <small>Cost: 1 • Reroll all living</small>
+                </button>
+              </div>
+              <button className="btn btn-primary" onClick={handleConfirm} disabled={locked || livingRoster.length !== 3}>
+                <span>DESCEND WITH THESE SOULS</span>
+              </button>
+            </div>
+          </section>
         </div>
 
-        <div className="text-center">
-          <p className="mb-4">
-            Selected: {selectedCharacters.length} / 3
-          </p>
-          <button
-            onClick={onStartRun}
-            disabled={selectedCharacters.length !== 3}
-            className={`px-8 py-4 rounded-lg text-xl font-bold ${
-              selectedCharacters.length === 3
-                ? 'bg-green-600 hover:bg-green-700'
-                : 'bg-gray-600 cursor-not-allowed'
-            }`}
-          >
-            Begin Descent
-          </button>
-        </div>
+        <aside
+          className={`popover ${popoverState ? 'open' : ''}`}
+          style={popoverState ? { left: popoverState.left, top: popoverState.top } : {}}
+          aria-hidden={!popoverState}
+        >
+          {popoverState && (() => {
+            const character = getCharacter(popoverState.id);
+            const abilities = abilityListFor(popoverState.id);
+            return (
+              <>
+                <div className="pop-head">
+                  <h3 className="pop-title">{character.name}</h3>
+                  <div className="pop-role">{character.role}</div>
+                </div>
+                <div className="pop-divider"></div>
+                <div className="stats">
+                  <div className="stat hp">
+                    <div className="stat-label">HP</div>
+                    <div className="stat-val">{character.baseStats.hp}</div>
+                  </div>
+                  <div className="stat con">
+                    <div className="stat-label">CON</div>
+                    <div className="stat-val">{character.baseStats.con}</div>
+                  </div>
+                  <div className="stat spd">
+                    <div className="stat-label">SPD</div>
+                    <div className="stat-val">{character.baseStats.spd}</div>
+                  </div>
+                </div>
+                <ul className="abilities">
+                  {abilities.map(ability => (
+                    <li key={ability.id}>
+                      <b>{ability.name}</b> — {formatAbilityMeta(ability)}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            );
+          })()}
+        </aside>
+
+        <div className={`lock ${locked ? 'active' : ''}`} aria-hidden="true"></div>
+        <div className={`toast ${toast ? 'show' : ''}`}>{toast}</div>
       </div>
     </div>
   );
