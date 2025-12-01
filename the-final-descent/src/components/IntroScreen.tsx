@@ -762,7 +762,11 @@ class SceneManager {
     // Meteor phase
     if (this.timeline.phase === 'meteor' && this.meteorMesh) {
       const elapsed = this.timeline.time - this.timeline.meteorStartTime;
-      const progress = Math.min(elapsed / 1.0, 1.0); // 1 second descent
+      const linearProgress = Math.min(elapsed / 3.0, 1.0); // 3 second descent
+
+      // Apply easing - starts slow, accelerates (like gravity)
+      // Using quadratic ease-in for acceleration effect
+      const progress = linearProgress * linearProgress;
 
       // 60-degree angle trajectory - falls toward viewer, lands far in distance
       // Camera at (0, 0, 30), impact ~170 units away at (0, -20, -170)
@@ -774,6 +778,7 @@ class SceneManager {
       this.meteorMesh.rotation.y += deltaTime * 1.8;
 
       // Perspective scaling - starts tiny (0.05), grows as it approaches
+      // Scale grows with speed (using the same accelerated progress)
       const scale = 0.05 + progress * 0.95;
       this.meteorMesh.scale.set(scale, scale, scale);
 
