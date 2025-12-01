@@ -266,35 +266,34 @@ const RealityCrackFragmentShader = `
 
   // Dr. Strange-style crystalline crack pattern
   float getCrackPattern(vec2 uv, float t) {
-    // Create radial + angular distortion for crystalline look
     float angle = atan(uv.y, uv.x);
     float radius = length(uv);
 
-    // Multiple crack rays emanating from center
+    // RADIAL CRACK RAYS - highly visible
     float rayPattern = 0.0;
-    for(int i = 0; i < 8; i++) {
-      float rayAngle = float(i) * 0.785398 + t * 0.2; // 45 degrees apart
+    for(int i = 0; i < 12; i++) {
+      float rayAngle = float(i) * 0.523599 + t * 0.1; // 30 degrees apart
       float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
 
-      // Create sharp crack lines with noise
-      float noisyAngle = angleDiff + snoise3d(vec3(uv * 5.0, t * 0.5)) * 0.3;
-      float ray = smoothstep(0.12, 0.0, noisyAngle) * (1.0 - smoothstep(0.1, 1.0, radius));
+      // Make rays THICK and VISIBLE
+      float ray = smoothstep(0.08, 0.0, angleDiff) * (1.0 - smoothstep(0.0, 0.6, radius));
       rayPattern = max(rayPattern, ray);
     }
 
-    // Add fractal detail with visible cracks
-    vec3 p = vec3(uv * 8.0, t * 0.3);
-    float n1 = abs(snoise3d(p));
-    float n2 = abs(snoise3d(p * 2.0 + 100.0));
-    float n3 = abs(snoise3d(p * 4.0 + 200.0));
+    // FRACTAL NOISE CRACKS - guaranteed visible
+    vec3 p = vec3(uv * 6.0, t * 0.2);
+    float n1 = snoise3d(p);
+    float n2 = snoise3d(p * 2.3 + 100.0);
 
-    // Create sharp crack lines from noise
+    // Create THICK crack lines
     float noiseCracks = 0.0;
-    noiseCracks += smoothstep(0.15, 0.0, n1) * 0.8;
-    noiseCracks += smoothstep(0.1, 0.0, n2) * 0.6;
-    noiseCracks += smoothstep(0.08, 0.0, n3) * 0.4;
+    noiseCracks += smoothstep(0.7, 0.3, abs(n1)) * 0.9;
+    noiseCracks += smoothstep(0.6, 0.2, abs(n2)) * 0.7;
 
-    return max(rayPattern, noiseCracks);
+    // GUARANTEED VISIBLE BASE PATTERN
+    float baseCracks = smoothstep(0.8, 0.4, abs(snoise3d(vec3(uv * 4.0, t * 0.15))));
+
+    return max(max(rayPattern, noiseCracks), baseCracks);
   }
 
   void main() {
@@ -322,11 +321,11 @@ const RealityCrackFragmentShader = `
     float crackPattern2 = getCrackPattern(centeredUV * 1.3 + vec2(0.5, 0.3), time * 0.7);
     float crackPattern3 = getCrackPattern(centeredUV * 0.8 - vec2(0.3, 0.5), time * 1.3);
 
-    // Combine crack patterns - ensure visibility
-    float cracks = max(max(crackPattern, crackPattern2 * 0.5), crackPattern3 * 0.3);
+    // Combine crack patterns - MAXIMUM visibility
+    float cracks = max(crackPattern, max(crackPattern2 * 0.6, crackPattern3 * 0.4));
 
-    // Apply radial fade and intensity (but ensure minimum visibility)
-    cracks = cracks * radialFade * max(intensity, 0.3);
+    // Apply radial fade and ENSURE ALWAYS VISIBLE
+    cracks = cracks * radialFade * max(intensity, 0.8);
 
     // SUPER SCI-FI GLITCH EFFECTS
     float glitchTime = floor(time * 12.0);
@@ -367,7 +366,7 @@ const RealityCrackFragmentShader = `
     distortedColor.b = texture2D(tDiffuse, distortedUV - vec2(aberration, aberration * 0.5)).b;
 
     // OTHERWORLDLY PURPLE/BLUE GLOW from cracks (reality bleeding through)
-    float glowIntensity = cracks * 5.0 * pulse * max(intensity, 0.5);
+    float glowIntensity = cracks * 8.0 * pulse * max(intensity, 0.8);
 
     // Purple/blue cosmic horror color - pulsing between shades
     vec3 purpleBlue1 = vec3(0.4, 0.2, 0.9);  // Deep purple
