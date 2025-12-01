@@ -640,7 +640,6 @@ class SceneManager {
   bloomPass: UnrealBloomPass;
   chromaPass: ShaderPass;
   grainPass: ShaderPass;
-  crackPass: ShaderPass | null = null;
   renderTarget: THREE.WebGLRenderTarget;
 
   meteorMesh: THREE.Mesh | null = null;
@@ -716,23 +715,6 @@ class SceneManager {
     this.grainPass = new ShaderPass(FilmGrainShader);
     this.grainPass.uniforms['amount'].value = 0.15;
     this.composer.addPass(this.grainPass);
-
-    // Reality Crack post-processing pass (initially disabled)
-    const RealityCrackShader = {
-      uniforms: {
-        tDiffuse: { value: null },
-        resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-        time: { value: 0 },
-        intensity: { value: 0.0 },
-        craterCenter: { value: new THREE.Vector2(0.5, 0.5) },
-        craterRadius: { value: 0.15 },
-      },
-      vertexShader: RefractionShardVertexShader,
-      fragmentShader: RealityCrackFragmentShader,
-    };
-    this.crackPass = new ShaderPass(RealityCrackShader);
-    this.crackPass.enabled = false; // Start disabled, enable on impact
-    this.composer.addPass(this.crackPass);
 
     const fxaaPass = new ShaderPass(FXAAShader);
     fxaaPass.uniforms['resolution'].value.set(
@@ -1081,11 +1063,7 @@ class SceneManager {
         this.timeline.impactTime = this.timeline.time;
         this.meteorMesh.visible = false;
         this.createImpactEffects();
-
-        // Enable reality crack pass
-        if (this.crackPass) {
-          this.crackPass.enabled = true;
-        }
+        this.createShatteredGlass();
 
         // Camera shake
         this.camera.position.x = Math.random() * 0.8 - 0.4;
@@ -1142,25 +1120,37 @@ class SceneManager {
         this.craterGlow.scale.set(pulse, pulse, 1);
       }
 
-      // Animate reality crack effect - fade in intensity
-      if (this.crackPass && impactElapsed > 0.05) {
+      // Show reality crack effect - fade in intensity
+      if (impactElapsed > 0.05 && this.shardsMeshes.length > 0) {
+        const crackPlane = this.shardsMeshes[0];
+        crackPlane.visible = true;
+
         const crackElapsed = impactElapsed - 0.05;
 
-        // Fade in intensity over 0.3 seconds to full strength
+        // Fade in intensity over 0.3 seconds
         const intensityProgress = Math.min(crackElapsed / 0.3, 1.0);
         const easedIntensity = 1.0 - Math.pow(1.0 - intensityProgress, 2);
 
-        // Update crack pass uniforms
-        if (this.crackPass.uniforms.intensity) {
-          this.crackPass.uniforms.intensity.value = easedIntensity;
+        const material = crackPlane.material as THREE.ShaderMaterial;
+
+        // Update uniforms
+        if (material.uniforms.intensity) {
+          material.uniforms.intensity.value = easedIntensity;
         }
-        if (this.crackPass.uniforms.time) {
-          this.crackPass.uniforms.time.value = this.timeline.time;
+        if (material.uniforms.time) {
+          material.uniforms.time.value = this.timeline.time;
         }
 
-        // Crater center at bottom-center of screen (where meteor hit)
-        if (this.crackPass.uniforms.craterCenter) {
-          this.crackPass.uniforms.craterCenter.value.set(0.5, 0.3); // Center-bottom
+        // Calculate crater center in screen space
+        const craterWorldPos = crackPlane.position.clone();
+        craterWorldPos.project(this.camera);
+
+        // Convert from NDC (-1 to 1) to screen space (0 to 1)
+        const craterScreenX = (craterWorldPos.x + 1.0) * 0.5;
+        const craterScreenY = (craterWorldPos.y + 1.0) * 0.5;
+
+        if (material.uniforms.craterCenter) {
+          material.uniforms.craterCenter.value.set(craterScreenX, craterScreenY);
         }
       }
 
@@ -1182,37 +1172,33 @@ class SceneManager {
         material.opacity = 0.85;
       }
 
-      // Continue reality crack effect at full intensity
-      if (this.crackPass) {
-        // Update time uniform for animated cracks
-        if (this.crackPass.uniforms.time) {
-          this.crackPass.uniforms.time.value = this.timeline.time;
-        }
+      // Continue reality crack effect
+      if (this.shardsMeshes.length > 0) {
+        const crackPlane = this.shardsMeshes[0];
+        if (crackPlane.visible) {
+          const material = crackPlane.material as THREE.ShaderMaterial;
 
-        // Keep intensity at full
-        if (this.crackPass.uniforms.intensity) {
-          this.crackPass.uniforms.intensity.value = 1.0;
-        }
+          // Update time uniform for animated cracks
+          if (material.uniforms.time) {
+            material.uniforms.time.value = this.timeline.time;
+          }
 
-        // Keep crater center at bottom-center
-        if (this.crackPass.uniforms.craterCenter) {
-          this.crackPass.uniforms.craterCenter.value.set(0.5, 0.3);
+          // Keep intensity at full
+          if (material.uniforms.intensity) {
+            material.uniforms.intensity.value = 1.0;
+          }
+
+          // Update crater center in screen space
+          const craterWorldPos = crackPlane.position.clone();
+          craterWorldPos.project(this.camera);
+          const craterScreenX = (craterWorldPos.x + 1.0) * 0.5;
+          const craterScreenY = (craterWorldPos.y + 1.0) * 0.5;
+
+          if (material.uniforms.craterCenter) {
+            material.uniforms.craterCenter.value.set(craterScreenX, craterScreenY);
+          }
         }
       }
-    }
-
-    // Update star twinkling effect
-    if (this.starfield && this.timeline.phase === 'intro') {
-      const sizes = this.starfield.geometry.attributes.size.array as Float32Array;
-      for (let i = 0; i < sizes.length; i++) {
-        // Each star twinkles at slightly different rate based on its index
-        const twinkleSpeed = 2.0 + (i % 10) * 0.3;
-        const twinkle = Math.sin(this.timeline.time * twinkleSpeed + i * 0.1) * 0.3 + 0.7;
-        const baseSizes = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
-        const baseSize = baseSizes[i % baseSizes.length];
-        sizes[i] = baseSize * twinkle;
-      }
-      this.starfield.geometry.attributes.size.needsUpdate = true;
     }
 
     // Update particles
