@@ -634,10 +634,10 @@ class SceneManager {
 
     // Massive explosion burst with debris
     const debrisVelocity = new THREE.Vector3(0, 0, 0);
-    for (let i = 0; i < 360; i += 3) {
+    for (let i = 0; i < 360; i += 2) {
       const angle = (i / 360) * Math.PI * 2;
-      const elevAngle = (Math.random() * 0.5 + 0.3) * Math.PI;
-      const speed = 15 + Math.random() * 25;
+      const elevAngle = (Math.random() * 0.6 + 0.2) * Math.PI;
+      const speed = 20 + Math.random() * 35;
 
       debrisVelocity.set(
         Math.cos(angle) * Math.sin(elevAngle) * speed,
@@ -645,15 +645,15 @@ class SceneManager {
         Math.sin(angle) * Math.sin(elevAngle) * speed
       );
 
-      // Mix of plasma, ember, and smoke for realistic explosion
-      this.explosionSystem.emit(impactPoint, debrisVelocity, 3, 'plasma');
-      this.explosionSystem.emit(impactPoint, debrisVelocity, 2, 'ember');
-      this.explosionSystem.emit(impactPoint, debrisVelocity, 1, 'smoke');
+      // Mix of plasma, ember, and smoke for realistic explosion (more particles)
+      this.explosionSystem.emit(impactPoint, debrisVelocity, 5, 'plasma');
+      this.explosionSystem.emit(impactPoint, debrisVelocity, 4, 'ember');
+      this.explosionSystem.emit(impactPoint, debrisVelocity, 2, 'smoke');
     }
 
-    // Create expanding shockwave rings
+    // Create expanding shockwave rings (larger for visibility at distance)
     for (let i = 0; i < 3; i++) {
-      const ringGeometry = new THREE.RingGeometry(0.1, 0.5, 64);
+      const ringGeometry = new THREE.RingGeometry(2, 4, 64);
       const ringMaterial = new THREE.MeshBasicMaterial({
         color: i === 0 ? 0x8844ff : i === 1 ? 0x6633dd : 0x4422aa,
         transparent: true,
@@ -664,16 +664,16 @@ class SceneManager {
       const ring = new THREE.Mesh(ringGeometry, ringMaterial);
       ring.position.copy(impactPoint);
       ring.rotation.x = -Math.PI / 2;
-      ring.userData.startTime = this.timeline.time + i * 0.1;
-      ring.userData.initialScale = 0.1;
+      ring.userData.startTime = this.timeline.time + i * 0.15;
+      ring.userData.initialScale = 1.0;
       this.shockwaveRings.push(ring);
       this.scene.add(ring);
     }
 
-    // Create eerie purple/blue crater glow
-    const craterGeometry = new THREE.CircleGeometry(5, 64);
+    // Create eerie purple/blue crater glow (much larger and brighter)
+    const craterGeometry = new THREE.CircleGeometry(25, 64);
     const craterMaterial = new THREE.MeshBasicMaterial({
-      color: 0x7744ff,
+      color: 0x6633ff,
       transparent: true,
       opacity: 0,
       blending: THREE.AdditiveBlending,
@@ -692,21 +692,21 @@ class SceneManager {
     const impactCenter = new THREE.Vector2(0, -170);
     const points: THREE.Vector2[] = [];
 
-    // Create layered distribution for more density
+    // Create layered distribution for more density (larger radius for visibility)
     for (let i = 0; i < shardCount; i++) {
       const angle = (i / shardCount) * Math.PI * 2 + Math.random() * 0.5;
-      const distance = 2 + Math.random() * 6;
+      const distance = 10 + Math.random() * 20;
       points.push(new THREE.Vector2(
         impactCenter.x + Math.cos(angle) * distance,
         impactCenter.y + Math.sin(angle) * distance
       ));
     }
 
-    // Create shards
+    // Create shards (larger for visibility at distance)
     points.forEach((point, i) => {
       const sides = 5 + Math.floor(Math.random() * 3);
       const shape = new THREE.Shape();
-      const size = 0.6 + Math.random() * 0.5;
+      const size = 3 + Math.random() * 2;
 
       for (let j = 0; j < sides; j++) {
         const angle = (j / sides) * Math.PI * 2 + Math.random() * 0.4;
@@ -779,7 +779,14 @@ class SceneManager {
 
       // Perspective scaling - starts tiny (0.05), grows as it approaches
       // Scale grows with speed (using the same accelerated progress)
-      const scale = 0.05 + progress * 0.95;
+      let scale = 0.05 + progress * 0.95;
+
+      // During last 2 seconds (when elapsed > 1.0), grow an additional 15%
+      if (elapsed > 1.0) {
+        const lastTwoSecondsProgress = Math.min((elapsed - 1.0) / 2.0, 1.0);
+        scale *= (1.0 + lastTwoSecondsProgress * 0.15);
+      }
+
       this.meteorMesh.scale.set(scale, scale, scale);
 
       // Update meteor shader
@@ -865,27 +872,27 @@ class SceneManager {
       // Bloom decay
       this.bloomPass.strength = Math.max(1.5, 3.5 - impactElapsed * 2.0);
 
-      // Animate shockwave rings
+      // Animate shockwave rings (expand dramatically)
       this.shockwaveRings.forEach((ring) => {
         const ringElapsed = this.timeline.time - ring.userData.startTime;
         if (ringElapsed > 0) {
-          const ringProgress = Math.min(ringElapsed / 1.2, 1.0);
-          const scale = 0.1 + ringProgress * 30;
+          const ringProgress = Math.min(ringElapsed / 1.5, 1.0);
+          const scale = ring.userData.initialScale + ringProgress * 50;
           ring.scale.set(scale, scale, 1);
 
           const material = ring.material as THREE.MeshBasicMaterial;
-          material.opacity = Math.max(0, 0.8 - ringProgress * 0.8);
+          material.opacity = Math.max(0, 0.9 - ringProgress * 0.9);
         }
       });
 
-      // Crater glow fade in
+      // Crater glow fade in (brighter and more visible)
       if (this.craterGlow) {
         const glowProgress = Math.min(impactElapsed / 0.8, 1.0);
         const material = this.craterGlow.material as THREE.MeshBasicMaterial;
-        material.opacity = glowProgress * 0.6;
+        material.opacity = glowProgress * 0.85;
 
         // Pulsing glow effect
-        const pulse = Math.sin(this.timeline.time * 3) * 0.1 + 0.9;
+        const pulse = Math.sin(this.timeline.time * 3) * 0.15 + 0.9;
         this.craterGlow.scale.set(pulse, pulse, 1);
       }
 
@@ -912,13 +919,14 @@ class SceneManager {
     // Crater phase - maintain the eerie glow
     if (this.timeline.phase === 'crater') {
       if (this.craterGlow) {
-        const pulse = Math.sin(this.timeline.time * 2) * 0.15 + 0.85;
+        const pulse = Math.sin(this.timeline.time * 2) * 0.2 + 0.9;
         this.craterGlow.scale.set(pulse, pulse, 1);
 
-        // Cycle through purple/blue hues
-        const hueShift = Math.sin(this.timeline.time * 0.5) * 0.2;
+        // Cycle through purple/blue hues - stronger saturation
+        const hueShift = Math.sin(this.timeline.time * 0.5) * 0.15;
         const material = this.craterGlow.material as THREE.MeshBasicMaterial;
-        material.color.setHSL(0.7 + hueShift, 0.9, 0.5);
+        material.color.setHSL(0.68 + hueShift, 1.0, 0.55);
+        material.opacity = 0.85;
       }
     }
 
