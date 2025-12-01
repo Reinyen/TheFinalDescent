@@ -11,13 +11,13 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass';
 
 // ============================================================================
-// TIMELINE STRUCTURE (3.5 seconds total)
+// TIMELINE STRUCTURE (6.5 seconds total)
 // ============================================================================
-// 0.0 - 0.5s: FADE_IN - Starfield fades in with twinkling
-// 0.5 - 2.0s: COMET_APPROACH - Star grows and falls at 60° angle
-// 2.0 - 2.2s: IMPACT - Explosion with debris and shockwaves
-// 2.2 - 3.0s: CRATER_SETTLE - Eerie glow, reality warp, title glitches in
-// 3.0 - 3.5s: BUTTON_REVEAL - Button glitches in, ready to play
+// 0.0 - 1.0s: FADE_IN - Starfield fades in with twinkling
+// 1.0 - 4.0s: COMET_APPROACH - Star grows and falls at 60° angle (3 seconds)
+// 4.0 - 4.5s: IMPACT - Explosion with debris and shockwaves (0.5 seconds)
+// 4.5 - 5.5s: CRATER_SETTLE - Eerie glow, reality warp, title glitches in (1 second)
+// 5.5 - 6.5s: BUTTON_REVEAL - Button glitches in, ready to play (1 second)
 
 // ============================================================================
 // CUSTOM SHADERS
@@ -97,29 +97,49 @@ const CometFragmentShader = `
   varying vec3 vNormal;
   varying vec3 vPosition;
 
+  // Hash for variation
+  float hash(vec3 p) {
+    return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+  }
+
   void main() {
     // Fresnel for edge glow
     vec3 viewDir = normalize(cameraPosition - vPosition);
-    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.5);
+    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.0);
 
-    // Base rocky color - dark gray with purple tint
-    vec3 rockColor = vec3(0.15, 0.12, 0.18);
+    // REALISTIC rocky asteroid base - gray/brown with variation
+    float rockVariation = hash(vPosition * 2.0);
+    vec3 darkRock = vec3(0.15, 0.13, 0.12); // Dark charcoal
+    vec3 lightRock = vec3(0.25, 0.22, 0.20); // Lighter gray-brown
+    vec3 rockColor = mix(darkRock, lightRock, rockVariation);
 
-    // Cosmic horror heat colors - purple → teal → green
-    vec3 heatColor1 = vec3(0.4, 0.1, 0.5);  // Deep purple
-    vec3 heatColor2 = vec3(0.2, 0.6, 0.6);  // Teal
-    vec3 heatColor3 = vec3(0.3, 0.8, 0.4);  // Eerie green
+    // Cosmic horror heat - starts SUBTLE, becomes supernatural
+    // At low intensity: realistic orange/red heat
+    // At high intensity: purple/teal/green cosmic colors
+    vec3 realisticHeat = vec3(1.0, 0.4, 0.1); // Orange-red
+    vec3 cosmicPurple = vec3(0.6, 0.2, 0.8);   // Purple
+    vec3 cosmicTeal = vec3(0.2, 0.7, 0.7);     // Teal
+    vec3 cosmicGreen = vec3(0.4, 0.9, 0.5);    // Eerie green
 
-    // Mix heat colors based on intensity
-    vec3 heatColor = mix(heatColor1, heatColor2, heatIntensity * 0.5);
-    heatColor = mix(heatColor, heatColor3, heatIntensity * heatIntensity);
+    // Mix heat colors - realistic at low intensity, cosmic at high
+    vec3 heatColor = realisticHeat;
+    if (heatIntensity > 0.3) {
+      float cosmicMix = (heatIntensity - 0.3) / 0.7; // 0 to 1
+      heatColor = mix(realisticHeat, cosmicPurple, cosmicMix * 0.5);
+      heatColor = mix(heatColor, cosmicTeal, cosmicMix * cosmicMix * 0.3);
+      heatColor = mix(heatColor, cosmicGreen, sin(time * 2.0) * 0.5 + 0.5 * cosmicMix * 0.2);
+    }
 
-    // Combine rock and heat
-    vec3 finalColor = mix(rockColor, heatColor, fresnel * 0.7 + heatIntensity * 0.5);
+    // Apply heat primarily to edges (fresnel) for realistic atmospheric heating
+    vec3 finalColor = rockColor;
+    finalColor = mix(finalColor, heatColor, fresnel * heatIntensity * 0.8);
 
-    // Add bright fresnel rim with cosmic colors
-    vec3 rimColor = mix(vec3(0.6, 0.3, 0.8), vec3(0.3, 0.9, 0.7), heatIntensity);
-    finalColor += rimColor * fresnel * heatIntensity * 2.5;
+    // Add bright rim glow
+    vec3 rimColor = mix(vec3(1.0, 0.6, 0.3), heatColor, heatIntensity);
+    finalColor += rimColor * fresnel * fresnel * heatIntensity * 3.0;
+
+    // Subtle emissive glow for cosmic horror effect
+    finalColor += heatColor * heatIntensity * 0.2;
 
     gl_FragColor = vec4(finalColor, 1.0);
   }
@@ -191,62 +211,82 @@ const RealityCrackShader = {
       vec2 fromCenter = uv - craterCenter;
       float distFromCrater = length(fromCenter);
 
-      // Radial fade - very visible at center, fades to normal at edges
-      // 0.15 screen units = radius of effect
-      float radialFade = smoothstep(0.25, 0.0, distFromCrater);
+      // Radial fade - VERY visible at center, fades to normal at edges
+      // Larger radius for more prominent effect
+      float radialFade = smoothstep(0.35, 0.0, distFromCrater);
       radialFade = radialFade * intensity;
 
-      if (radialFade < 0.01) {
+      if (radialFade < 0.001) {
         // Outside effect - normal rendering
         gl_FragColor = texture2D(tDiffuse, uv);
         return;
       }
 
-      // GLASS CRACK PATTERN
+      // GLASS CRACK PATTERN - MUCH MORE VISIBLE
       float angle = atan(fromCenter.y, fromCenter.x);
       float radius = distFromCrater;
 
       float cracks = 0.0;
 
-      // Primary radial cracks (12 main rays)
-      for(int i = 0; i < 12; i++) {
-        float rayAngle = float(i) * 0.523599; // 30 degrees
+      // Primary radial cracks (18 main rays for denser pattern)
+      for(int i = 0; i < 18; i++) {
+        float rayAngle = float(i) * 0.349066; // 20 degrees
         float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
-        float ray = smoothstep(0.1, 0.0, angleDiff) * (1.0 - smoothstep(0.0, 0.2, radius));
-        cracks = max(cracks, ray);
+        // MUCH THICKER cracks
+        float ray = smoothstep(0.15, 0.0, angleDiff) * (1.0 - smoothstep(0.0, 0.3, radius));
+        cracks = max(cracks, ray * 1.5); // BOOSTED intensity
       }
 
-      // Secondary cracks (8 offset rays)
-      for(int i = 0; i < 8; i++) {
-        float rayAngle = float(i) * 0.785398 + 0.3;
+      // Secondary cracks (12 offset rays)
+      for(int i = 0; i < 12; i++) {
+        float rayAngle = float(i) * 0.523599 + 0.174533;
         float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
-        float ray = smoothstep(0.08, 0.0, angleDiff) * (1.0 - smoothstep(0.05, 0.15, radius));
-        cracks = max(cracks, ray * 0.7);
+        float ray = smoothstep(0.12, 0.0, angleDiff) * (1.0 - smoothstep(0.05, 0.25, radius));
+        cracks = max(cracks, ray * 1.2);
+      }
+
+      // Tertiary fine cracks for glass-like texture
+      for(int i = 0; i < 8; i++) {
+        float rayAngle = float(i) * 0.785398 + 0.3927;
+        float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
+        float ray = smoothstep(0.08, 0.0, angleDiff) * (1.0 - smoothstep(0.08, 0.18, radius));
+        cracks = max(cracks, ray * 0.9);
       }
 
       cracks = cracks * radialFade;
 
-      // REALITY WARPING - distort UV coordinates along cracks
-      vec2 warpOffset = fromCenter * cracks * 0.03 * sin(time * 2.0);
+      // REALITY WARPING - MUCH MORE DRAMATIC distortion
+      vec2 warpOffset = fromCenter * cracks * 0.08 * sin(time * 2.0);
       vec2 distortedUV = uv + warpOffset;
 
-      // CHROMATIC ABERRATION along cracks
-      float aberration = cracks * radialFade * 0.01;
-      vec3 refracted;
-      refracted.r = texture2D(tDiffuse, distortedUV + vec2(aberration, 0.0)).r;
-      refracted.g = texture2D(tDiffuse, distortedUV).g;
-      refracted.b = texture2D(tDiffuse, distortedUV - vec2(aberration, 0.0)).b;
+      // Additional kaleidoscope-style warping
+      float warpStrength = cracks * radialFade * 0.05;
+      distortedUV += vec2(
+        sin(uv.y * 20.0 + time) * warpStrength,
+        cos(uv.x * 20.0 - time) * warpStrength
+      );
 
-      // COSMIC HORROR GLOW from cracks - purple/teal/green
-      vec3 glowColor1 = vec3(0.6, 0.2, 0.8); // Purple
-      vec3 glowColor2 = vec3(0.2, 0.8, 0.7); // Teal
-      vec3 glowColor3 = vec3(0.4, 0.9, 0.5); // Green
+      // CHROMATIC ABERRATION - MUCH MORE VISIBLE
+      float aberration = cracks * radialFade * 0.025;
+      vec3 refracted;
+      refracted.r = texture2D(tDiffuse, distortedUV + vec2(aberration, aberration * 0.5)).r;
+      refracted.g = texture2D(tDiffuse, distortedUV).g;
+      refracted.b = texture2D(tDiffuse, distortedUV - vec2(aberration, aberration * 0.5)).b;
+
+      // COSMIC HORROR GLOW from cracks - SUPER BRIGHT
+      vec3 glowColor1 = vec3(0.8, 0.3, 1.0); // Bright Purple
+      vec3 glowColor2 = vec3(0.3, 1.0, 0.9); // Bright Teal
+      vec3 glowColor3 = vec3(0.5, 1.0, 0.6); // Bright Green
 
       float pulse = sin(time * 3.0) * 0.5 + 0.5;
       vec3 glowColor = mix(glowColor1, glowColor2, pulse);
       glowColor = mix(glowColor, glowColor3, sin(time * 1.5) * 0.5 + 0.5);
 
-      vec3 crackGlow = glowColor * cracks * radialFade * 8.0;
+      // MASSIVELY BOOSTED glow intensity
+      vec3 crackGlow = glowColor * cracks * radialFade * 25.0;
+
+      // Add white-hot core to cracks
+      crackGlow += vec3(1.5, 1.4, 1.5) * cracks * cracks * radialFade * 15.0;
 
       // Combine
       vec3 finalColor = refracted + crackGlow;
@@ -430,7 +470,7 @@ class SceneManager {
 
   createStarfield() {
     const starGeometry = new THREE.BufferGeometry();
-    const starCount = 2000;
+    const starCount = 3000;
     const positions = new Float32Array(starCount * 3);
     const colors = new Float32Array(starCount * 3);
     const sizes = new Float32Array(starCount);
@@ -440,12 +480,27 @@ class SceneManager {
       positions[i * 3 + 1] = (Math.random() - 0.5) * 150;
       positions[i * 3 + 2] = (Math.random() - 0.5) * 100 - 30;
 
-      const temp = 0.6 + Math.random() * 0.4;
-      colors[i * 3] = 0.8 + temp * 0.2;
-      colors[i * 3 + 1] = 0.8 + temp * 0.2;
-      colors[i * 3 + 2] = 0.9 + temp * 0.1;
+      // Realistic star colors - white to slight blue/yellow tint
+      const temp = Math.random();
+      if (temp < 0.7) {
+        // White stars (most common)
+        colors[i * 3] = 0.95 + Math.random() * 0.05;
+        colors[i * 3 + 1] = 0.95 + Math.random() * 0.05;
+        colors[i * 3 + 2] = 1.0;
+      } else if (temp < 0.9) {
+        // Slight blue tint
+        colors[i * 3] = 0.85;
+        colors[i * 3 + 1] = 0.9;
+        colors[i * 3 + 2] = 1.0;
+      } else {
+        // Slight yellow/orange tint
+        colors[i * 3] = 1.0;
+        colors[i * 3 + 1] = 0.9;
+        colors[i * 3 + 2] = 0.8;
+      }
 
-      sizes[i] = Math.random() * 0.4 + 0.1;
+      // Varied star sizes for depth - LARGER for visibility
+      sizes[i] = Math.random() * 1.5 + 0.5; // 0.5 to 2.0
     }
 
     starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -453,12 +508,13 @@ class SceneManager {
     starGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
     const starMaterial = new THREE.PointsMaterial({
-      size: 0.12,
+      size: 0.8, // MUCH LARGER for crisp visibility
       vertexColors: true,
       transparent: true,
       opacity: 0,
       sizeAttenuation: true,
       blending: THREE.NormalBlending,
+      depthWrite: false,
     });
 
     this.starfield = new THREE.Points(starGeometry, starMaterial);
@@ -466,7 +522,8 @@ class SceneManager {
   }
 
   createComet() {
-    const geometry = new THREE.IcosahedronGeometry(0.5, 3);
+    // Larger, more detailed geometry for realistic rocky appearance
+    const geometry = new THREE.IcosahedronGeometry(1.2, 4);
 
     this.cometMaterial = new THREE.ShaderMaterial({
       uniforms: {
@@ -479,10 +536,21 @@ class SceneManager {
 
     this.comet = new THREE.Mesh(geometry, this.cometMaterial);
     // Start at top of screen, will fall to 2/3 down
-    this.comet.position.set(0, 35, -20);
+    this.comet.position.set(0, 40, -30);
     this.comet.scale.set(0.01, 0.01, 0.01);
     this.comet.visible = false;
     this.scene.add(this.comet);
+
+    // Add realistic glow aura
+    const glowGeometry = new THREE.IcosahedronGeometry(1.8, 2);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: 0x6633ff,
+      transparent: true,
+      opacity: 0.15,
+      blending: THREE.AdditiveBlending,
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    this.comet.add(glow);
   }
 
   createCraterGlow() {
@@ -507,55 +575,56 @@ class SceneManager {
 
     const t = this.timeline.time;
 
-    // PHASE 1: FADE_IN (0.0 - 0.5s)
+    // PHASE 1: FADE_IN (0.0 - 1.0s)
     if (this.timeline.phase === 'fade_in') {
       if (this.starfield) {
         const material = this.starfield.material as THREE.PointsMaterial;
-        material.opacity = Math.min(t / 0.5, 1.0);
+        material.opacity = Math.min(t / 1.0, 1.0);
 
         // Star twinkling
         const sizes = this.starfield.geometry.attributes.size.array as Float32Array;
+        const baseSizes = this.starfield.geometry.attributes.size.array as Float32Array;
         for (let i = 0; i < sizes.length; i++) {
-          const twinkle = Math.sin(t * 3.0 + i * 0.5) * 0.2 + 0.8;
-          sizes[i] = (Math.random() * 0.4 + 0.1) * twinkle;
+          const twinkle = Math.sin(t * 2.5 + i * 0.5) * 0.3 + 0.85;
+          sizes[i] = (Math.random() * 1.5 + 0.5) * twinkle;
         }
         this.starfield.geometry.attributes.size.needsUpdate = true;
       }
 
-      if (t > 0.5) {
+      if (t > 1.0) {
         this.timeline.phase = 'comet_approach';
         if (this.comet) this.comet.visible = true;
       }
     }
 
-    // PHASE 2: COMET_APPROACH (0.5 - 2.0s)
+    // PHASE 2: COMET_APPROACH (1.0 - 4.0s) - 3 seconds
     else if (this.timeline.phase === 'comet_approach') {
       if (this.comet && this.cometMaterial) {
-        const elapsed = t - 0.5;
-        const progress = Math.min(elapsed / 1.5, 1.0);
+        const elapsed = t - 1.0;
+        const progress = Math.min(elapsed / 3.0, 1.0);
 
         // Position - falls from top at 60° angle to 2/3 down screen
-        const startY = 35;
+        const startY = 40;
         const endY = -8;
-        const startZ = -20;
+        const startZ = -30;
         const endZ = 10;
 
-        // Ease in (accelerating fall)
+        // Ease in (accelerating fall like gravity)
         const easedProgress = progress * progress;
 
         this.comet.position.y = startY + (endY - startY) * easedProgress;
         this.comet.position.z = startZ + (endZ - startZ) * easedProgress;
 
-        // Scale - starts tiny, grows slowly
+        // Scale - starts tiny, grows VERY slowly then suddenly large at impact
         const scale = 0.01 + progress * 0.99; // 0.01 to 1.0
         this.comet.scale.set(scale, scale, scale);
 
-        // Rotation
-        this.comet.rotation.x += deltaTime * 2.0;
-        this.comet.rotation.y += deltaTime * 1.5;
+        // Rotation for realistic tumbling
+        this.comet.rotation.x += deltaTime * 1.8;
+        this.comet.rotation.y += deltaTime * 1.3;
 
-        // Heat intensity increases
-        this.cometMaterial.uniforms.heatIntensity.value = progress;
+        // Heat intensity increases as it accelerates
+        this.cometMaterial.uniforms.heatIntensity.value = progress * 0.8;
         this.cometMaterial.uniforms.time.value = t;
       }
 
@@ -563,123 +632,123 @@ class SceneManager {
       if (this.starfield) {
         const sizes = this.starfield.geometry.attributes.size.array as Float32Array;
         for (let i = 0; i < sizes.length; i++) {
-          const twinkle = Math.sin(t * 3.0 + i * 0.5) * 0.2 + 0.8;
-          sizes[i] = (Math.random() * 0.4 + 0.1) * twinkle;
+          const twinkle = Math.sin(t * 2.5 + i * 0.5) * 0.3 + 0.85;
+          sizes[i] = (Math.random() * 1.5 + 0.5) * twinkle;
         }
         this.starfield.geometry.attributes.size.needsUpdate = true;
       }
 
-      if (t > 2.0) {
+      if (t > 4.0) {
         this.timeline.phase = 'impact';
         this.createImpact();
       }
     }
 
-    // PHASE 3: IMPACT (2.0 - 2.2s)
+    // PHASE 3: IMPACT (4.0 - 4.5s) - 0.5 seconds
     else if (this.timeline.phase === 'impact') {
-      const elapsed = t - 2.0;
+      const elapsed = t - 4.0;
 
-      // Hide comet, show explosion
-      if (this.comet && elapsed < 0.05) {
-        // Comet suddenly grows large just before hiding
-        this.comet.scale.set(3, 3, 3);
+      // Comet suddenly grows HUGE just before hiding
+      if (this.comet && elapsed < 0.1) {
+        const explosiveGrowth = 1.0 + (elapsed / 0.1) * 4.0; // Grows to 5x size
+        this.comet.scale.set(explosiveGrowth, explosiveGrowth, explosiveGrowth);
       }
 
-      if (elapsed > 0.05 && this.comet) {
+      if (elapsed > 0.1 && this.comet) {
         this.comet.visible = false;
       }
 
-      // Camera shake
-      const shakeIntensity = Math.max(0, 1.0 - elapsed / 0.2);
-      this.camera.position.x = (Math.random() - 0.5) * shakeIntensity * 0.5;
-      this.camera.position.y = (Math.random() - 0.5) * shakeIntensity * 0.3;
+      // Camera shake - more intense and longer
+      const shakeIntensity = Math.max(0, 1.0 - elapsed / 0.5);
+      this.camera.position.x = (Math.random() - 0.5) * shakeIntensity * 0.8;
+      this.camera.position.y = (Math.random() - 0.5) * shakeIntensity * 0.5;
 
       // Bloom spike
-      this.bloomPass.strength = 2.0 + shakeIntensity * 3.0;
+      this.bloomPass.strength = 2.0 + shakeIntensity * 4.0;
 
-      if (t > 2.2) {
+      if (t > 4.5) {
         this.timeline.phase = 'crater_settle';
         this.createCraterGlow();
       }
     }
 
-    // PHASE 4: CRATER_SETTLE (2.2 - 3.0s)
+    // PHASE 4: CRATER_SETTLE (4.5 - 5.5s) - 1 second
     else if (this.timeline.phase === 'crater_settle') {
-      const elapsed = t - 2.2;
-      const fadeProgress = Math.min(elapsed / 0.8, 1.0);
+      const elapsed = t - 4.5;
+      const fadeProgress = Math.min(elapsed / 1.0, 1.0);
 
       // Camera shake decay
-      this.camera.position.x *= 0.9;
-      this.camera.position.y *= 0.9;
+      this.camera.position.x *= 0.92;
+      this.camera.position.y *= 0.92;
 
       // Bloom decay
-      this.bloomPass.strength = Math.max(2.0, 5.0 - elapsed * 3.0);
+      this.bloomPass.strength = Math.max(2.0, 6.0 - elapsed * 4.0);
 
       // Crater glow fade in
       if (this.craterGlow) {
         const material = this.craterGlow.material as THREE.MeshBasicMaterial;
-        material.opacity = fadeProgress * 0.7;
+        material.opacity = fadeProgress * 0.8;
 
         // Pulsing
-        const pulse = Math.sin(t * 4.0) * 0.15 + 0.85;
+        const pulse = Math.sin(t * 4.0) * 0.2 + 0.9;
         this.craterGlow.scale.set(pulse, pulse, 1);
 
         // Color shift - purple → teal → green
-        const hue = 0.7 + Math.sin(t * 2.0) * 0.15;
-        material.color.setHSL(hue, 1.0, 0.5);
+        const hue = 0.7 + Math.sin(t * 2.0) * 0.2;
+        material.color.setHSL(hue, 1.0, 0.55);
       }
 
-      // Reality crack effect fade in
+      // Reality crack effect fade in - FULL intensity
       this.crackPass.uniforms['intensity'].value = fadeProgress;
       this.crackPass.uniforms['time'].value = t;
 
-      // Title reveal at 0.3s into crater settle
-      if (elapsed > 0.3 && this.onTitleReveal) {
+      // Title reveal at 0.4s into crater settle
+      if (elapsed > 0.4 && this.onTitleReveal) {
         this.onTitleReveal();
         this.onTitleReveal = undefined;
       }
 
-      if (t > 3.0) {
+      if (t > 5.5) {
         this.timeline.phase = 'button_reveal';
       }
     }
 
-    // PHASE 5: BUTTON_REVEAL (3.0 - 3.5s)
+    // PHASE 5: BUTTON_REVEAL (5.5 - 6.5s) - 1 second
     else if (this.timeline.phase === 'button_reveal') {
-      const elapsed = t - 3.0;
+      const elapsed = t - 5.5;
 
       // Continue crater effects
       if (this.craterGlow) {
-        const pulse = Math.sin(t * 4.0) * 0.15 + 0.85;
+        const pulse = Math.sin(t * 4.0) * 0.2 + 0.9;
         this.craterGlow.scale.set(pulse, pulse, 1);
 
         const material = this.craterGlow.material as THREE.MeshBasicMaterial;
-        const hue = 0.7 + Math.sin(t * 2.0) * 0.15;
-        material.color.setHSL(hue, 1.0, 0.5);
+        const hue = 0.7 + Math.sin(t * 2.0) * 0.2;
+        material.color.setHSL(hue, 1.0, 0.55);
       }
 
       this.crackPass.uniforms['time'].value = t;
 
       // Button reveal
-      if (elapsed > 0.1 && this.onButtonReveal) {
+      if (elapsed > 0.2 && this.onButtonReveal) {
         this.onButtonReveal();
         this.onButtonReveal = undefined;
       }
 
-      if (t > 3.5) {
+      if (t > 6.5) {
         this.timeline.phase = 'complete';
       }
     }
 
-    // PHASE 6: COMPLETE - maintain crater effects
+    // PHASE 6: COMPLETE - maintain crater effects indefinitely
     else if (this.timeline.phase === 'complete') {
       if (this.craterGlow) {
-        const pulse = Math.sin(t * 4.0) * 0.15 + 0.85;
+        const pulse = Math.sin(t * 4.0) * 0.2 + 0.9;
         this.craterGlow.scale.set(pulse, pulse, 1);
 
         const material = this.craterGlow.material as THREE.MeshBasicMaterial;
-        const hue = 0.7 + Math.sin(t * 2.0) * 0.15;
-        material.color.setHSL(hue, 1.0, 0.5);
+        const hue = 0.7 + Math.sin(t * 2.0) * 0.2;
+        material.color.setHSL(hue, 1.0, 0.55);
       }
 
       this.crackPass.uniforms['time'].value = t;
