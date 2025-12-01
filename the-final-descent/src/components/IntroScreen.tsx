@@ -246,29 +246,36 @@ const RefractionShardFragmentShader = `
 
     // Dark crack edges
     float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.0);
-    vec3 edgeColor = vec3(0.05, 0.05, 0.1); // Dark edges
-    float edgeMask = smoothstep(0.85, 0.95, fresnel);
+    vec3 edgeColor = vec3(0.02, 0.02, 0.05); // Very dark edges for strong contrast
+    float edgeMask = smoothstep(0.75, 0.9, fresnel);
 
-    // Bright light through cracks - white/purple/blue
-    vec2 centerDist = vUv - vec2(0.5);
-    float distFromUVCenter = length(centerDist);
-    float lightThroughCracks = (1.0 - distFromUVCenter) * 0.8;
+    // OMINOUS bright light behind shattered glass - much more intense
+    // Pulsing ominous light
+    float pulse = sin(time * 1.5) * 0.3 + 0.7; // Pulsing between 0.4 and 1.0
+    float lightIntensity = fresnel * fresnel * 3.5 * pulse; // Much brighter, concentrated at cracks
 
-    // Color cycle: white -> purple -> blue
+    // Color cycle: intense white -> glowing purple -> electric blue
     vec3 lightColor = mix(
-      vec3(1.0, 1.0, 1.0), // White
-      mix(vec3(0.8, 0.4, 1.0), vec3(0.4, 0.6, 1.0), sin(time * 2.0) * 0.5 + 0.5), // Purple to Blue
-      0.5
+      vec3(1.2, 1.2, 1.4), // Bright white with blue tint
+      mix(
+        vec3(1.0, 0.3, 1.2), // Intense purple
+        vec3(0.5, 0.8, 1.5), // Electric blue
+        sin(time * 2.0) * 0.5 + 0.5
+      ),
+      0.6
     );
-    vec3 crackLight = lightColor * lightThroughCracks;
+
+    // Add flickering variation
+    float flicker = hash(floor(time * 8.0) + vPosition.x * 10.0) * 0.3 + 0.7;
+    vec3 ominousLight = lightColor * lightIntensity * flicker;
 
     // Gradient fade based on distance from crater center
     float fadeOut = smoothstep(1.0, 0.3, distanceFromCenter);
 
-    // Combine effects
-    vec3 finalColor = refractedColor * (1.0 - edgeMask * 0.7); // Slightly darken at edges
-    finalColor += crackLight * fadeOut;
-    finalColor = mix(finalColor, edgeColor, edgeMask * 0.8); // Dark cracks
+    // Combine effects - stars visible through glass but with ominous light leaking through
+    vec3 finalColor = refractedColor * (0.7 + fresnel * 0.3); // Keep stars somewhat visible
+    finalColor += ominousLight * fadeOut * 2.0; // Strong ominous light
+    finalColor = mix(finalColor, edgeColor, edgeMask * 0.9); // Very dark cracks for contrast
 
     // Static glitch overlay
     float staticNoise = hash(gl_FragCoord.x + gl_FragCoord.y * 100.0 + time * 50.0);
@@ -488,6 +495,7 @@ class SceneManager {
   bloomPass: UnrealBloomPass;
   chromaPass: ShaderPass;
   grainPass: ShaderPass;
+  renderTarget: THREE.WebGLRenderTarget;
 
   meteorMesh: THREE.Mesh | null = null;
   meteorMaterial: THREE.ShaderMaterial | null = null;
@@ -533,6 +541,13 @@ class SceneManager {
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    // Create render target for glass shard refraction
+    this.renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+    });
 
     // Postprocessing
     this.composer = new EffectComposer(this.renderer);
@@ -861,19 +876,19 @@ class SceneManager {
       this.meteorMesh.rotation.y += deltaTime * 1.8;
 
       // Meteor growth: tiny dot for 2s, then explosive growth in last 1s
-      // First 2 seconds (elapsed 0-2): very slow growth 0.01 → 0.15
-      // Last second (elapsed 2-3): explosive growth 0.15 → 10 (1/12 screen width)
+      // First 2 seconds (elapsed 0-2): slow but VISIBLE growth 0.01 → 2.0
+      // Last second (elapsed 2-3): explosive dramatic growth 2.0 → 10 (1/12 screen width)
       let scale;
       if (elapsed < 2.0) {
-        // Slow, barely noticeable growth for first 2 seconds
+        // Slow but visible growth for first 2 seconds
         const firstTwoProgress = elapsed / 2.0;
-        scale = 0.01 + firstTwoProgress * 0.14; // 0.01 to 0.15
+        scale = 0.01 + firstTwoProgress * 1.99; // 0.01 to 2.0 - clearly growing
       } else {
-        // Last second: dramatic exponential growth
+        // Last second: dramatic explosive growth to final size
         const lastSecondProgress = (elapsed - 2.0) / 1.0;
         // Exponential curve for "OH MY GOD IT'S HUGE" effect
         const explosiveGrowth = Math.pow(lastSecondProgress, 0.4);
-        scale = 0.15 + explosiveGrowth * 9.85; // 0.15 to 10
+        scale = 2.0 + explosiveGrowth * 8.0; // 2.0 to 10.0
       }
 
       this.meteorMesh.scale.set(scale, scale, scale);
@@ -1080,7 +1095,28 @@ class SceneManager {
     this.trailSystem.update(deltaTime);
     this.explosionSystem.update(deltaTime);
 
-    // Render
+    // Render scene to texture for glass shard refraction
+    // Hide shards temporarily to capture clean background
+    const shardVisibility = this.shardsMeshes.map(s => s.visible);
+    this.shardsMeshes.forEach(s => s.visible = false);
+
+    // Render background to texture
+    this.renderer.setRenderTarget(this.renderTarget);
+    this.renderer.render(this.scene, this.camera);
+    this.renderer.setRenderTarget(null);
+
+    // Update shard materials with background texture
+    this.shardsMeshes.forEach(shard => {
+      const material = shard.material as THREE.ShaderMaterial;
+      if (material.uniforms.tDiffuse) {
+        material.uniforms.tDiffuse.value = this.renderTarget.texture;
+      }
+    });
+
+    // Restore shard visibility
+    this.shardsMeshes.forEach((s, i) => s.visible = shardVisibility[i]);
+
+    // Render final scene with post-processing
     this.composer.render();
   }
 
@@ -1089,6 +1125,7 @@ class SceneManager {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.composer.setSize(window.innerWidth, window.innerHeight);
+    this.renderTarget.setSize(window.innerWidth, window.innerHeight);
   }
 
   dispose() {
