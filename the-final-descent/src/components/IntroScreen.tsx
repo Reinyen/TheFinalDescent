@@ -219,29 +219,11 @@ const RealityCrackFragmentShader = `
   // Hash functions
   float hash(float n) { return fract(sin(n) * 43758.5453123); }
   float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
-
-  // Voronoi noise for crack patterns
-  vec2 voronoi(vec2 x) {
-    vec2 n = floor(x);
-    vec2 f = fract(x);
-
-    float minDist = 8.0;
-    vec2 minPoint;
-
-    for(int j = -1; j <= 1; j++) {
-      for(int i = -1; i <= 1; i++) {
-        vec2 b = vec2(float(i), float(j));
-        vec2 r = b - f + vec2(hash2(n + b), hash2(n + b + 100.0));
-        float d = length(r);
-
-        if(d < minDist) {
-          minDist = d;
-          minPoint = r;
-        }
-      }
-    }
-
-    return vec2(minDist, hash2(n + minPoint));
+  vec3 hash3(vec3 p) {
+    p = vec3(dot(p, vec3(127.1, 311.7, 74.7)),
+             dot(p, vec3(269.5, 183.3, 246.1)),
+             dot(p, vec3(113.5, 271.9, 124.6)));
+    return fract(sin(p) * 43758.5453123);
   }
 
   // Fractal noise
@@ -258,13 +240,48 @@ const RealityCrackFragmentShader = `
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
   }
 
+  // 3D Fractal Brownian Motion for crystalline patterns
+  float fbm(vec3 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+
+    for(int i = 0; i < 5; i++) {
+      vec3 hp = hash3(floor(p * frequency));
+      value += amplitude * (hp.x * 2.0 - 1.0);
+      frequency *= 2.0;
+      amplitude *= 0.5;
+    }
+
+    return value;
+  }
+
+  // Dr. Strange-style crystalline crack pattern
+  float getCrackPattern(vec2 uv, float t) {
+    // Multi-layered fractal approach for complex, non-geometric cracks
+    vec3 p = vec3(uv * 20.0, t * 0.3);
+
+    // Base crack structure - sharp, crystalline
+    float crack1 = abs(fbm(p));
+    float crack2 = abs(fbm(p * 1.7 + vec3(100.0, 50.0, 0.0)));
+    float crack3 = abs(fbm(p * 2.3 + vec3(50.0, 100.0, 0.0)));
+
+    // Combine cracks with different thresholds for variety
+    float cracks = min(min(crack1, crack2), crack3);
+
+    // Sharp edges - reality breaking
+    cracks = smoothstep(0.15, 0.05, cracks);
+
+    return cracks;
+  }
+
   void main() {
     vec2 screenUV = gl_FragCoord.xy / resolution;
     vec2 centeredUV = screenUV - craterCenter;
     float distFromCrater = length(centeredUV);
 
-    // Fade out effect beyond crater radius
-    float radialFade = smoothstep(craterRadius * 1.2, craterRadius * 0.3, distFromCrater);
+    // 15% of screen coverage - subtle boundary
+    float radialFade = smoothstep(craterRadius * 1.3, craterRadius * 0.2, distFromCrater);
 
     if(radialFade < 0.01) {
       // Outside effect radius - show normal background
@@ -272,77 +289,98 @@ const RealityCrackFragmentShader = `
       return;
     }
 
-    // Generate procedural crack pattern using Voronoi
-    vec2 crackCoord = centeredUV * 15.0 + time * 0.1;
-    vec2 voronoiResult = voronoi(crackCoord);
-    float crackPattern = voronoiResult.x;
+    // PULSING animation
+    float pulse = sin(time * 2.5) * 0.4 + 0.6;
+    float fastPulse = sin(time * 5.0) * 0.3 + 0.7;
 
-    // Add fractal detail to cracks
-    float fractalNoise = noise(centeredUV * 30.0 + time * 0.2);
-    fractalNoise += noise(centeredUV * 60.0 - time * 0.15) * 0.5;
-    fractalNoise += noise(centeredUV * 120.0 + time * 0.3) * 0.25;
+    // Generate Dr. Strange-style crystalline crack pattern
+    float crackPattern = getCrackPattern(centeredUV, time);
 
-    // Identify crack edges (thin lines where Voronoi cells meet)
-    float crackEdge = smoothstep(0.02, 0.0, crackPattern);
+    // Add secondary cracks at different angles for complexity
+    float crackPattern2 = getCrackPattern(centeredUV * 1.3 + vec2(0.5, 0.3), time * 0.7);
+    float crackPattern3 = getCrackPattern(centeredUV * 0.8 - vec2(0.3, 0.5), time * 1.3);
 
-    // Cracks appear and disappear with time
-    float crackFlicker = hash(floor(time * 3.0 + voronoiResult.y * 10.0)) * 0.5 + 0.5;
-    crackEdge *= crackFlicker;
+    // Combine crack patterns
+    float cracks = max(max(crackPattern, crackPattern2 * 0.7), crackPattern3 * 0.5);
+    cracks *= radialFade * intensity;
 
-    // Heavy glitch effect
-    float glitchTime = floor(time * 15.0);
-    float glitchStrength = hash(glitchTime) * 0.5 + 0.5;
+    // SUPER SCI-FI GLITCH EFFECTS
+    float glitchTime = floor(time * 12.0);
+    float glitchStrength = hash(glitchTime) * 0.8 + 0.2;
+
+    // Digital pixel corruption
+    vec2 pixelUV = floor(screenUV * resolution / 4.0) / (resolution / 4.0);
+    float pixelGlitch = hash2(pixelUV + glitchTime) * glitchStrength;
+
+    // Scanline glitch
+    float scanline = sin(screenUV.y * resolution.y * 0.5 + time * 10.0);
+    float scanlineGlitch = step(0.95, scanline) * glitchStrength;
+
+    // Horizontal glitch offset (like TV static)
     vec2 glitchOffset = vec2(
-      (hash(glitchTime + 1.0) - 0.5) * 0.03,
-      (hash(glitchTime + 2.0) - 0.5) * 0.03
-    ) * glitchStrength * radialFade;
-
-    // Warp/distort reality along crack lines
-    float distortionStrength = crackEdge * 0.08 + fractalNoise * 0.02;
-    vec2 distortedUV = screenUV + vec2(
-      sin(centeredUV.y * 20.0 + time) * distortionStrength,
-      cos(centeredUV.x * 20.0 - time) * distortionStrength
-    ) * radialFade;
-
-    distortedUV += glitchOffset;
-
-    // Sample distorted background with chromatic aberration
-    float aberration = 0.005 * radialFade * (crackEdge + 0.5);
-    vec3 refractedColor;
-    refractedColor.r = texture2D(tDiffuse, distortedUV + vec2(aberration, 0)).r;
-    refractedColor.g = texture2D(tDiffuse, distortedUV).g;
-    refractedColor.b = texture2D(tDiffuse, distortedUV - vec2(aberration, 0)).b;
-
-    // OMINOUS LIGHT leaking from cracks (another dimension bleeding through)
-    float pulse = sin(time * 2.0) * 0.3 + 0.7;
-    float lightIntensity = crackEdge * 4.0 * pulse * intensity;
-
-    // Otherworldly color cycling
-    vec3 lightColor = mix(
-      vec3(1.3, 1.3, 1.5), // Bright ethereal white
-      mix(
-        vec3(1.2, 0.2, 1.4), // Intense purple
-        vec3(0.3, 0.9, 1.6), // Electric blue
-        sin(time * 2.5 + voronoiResult.y * 6.28) * 0.5 + 0.5
-      ),
-      0.7
+      (hash(screenUV.y * 100.0 + glitchTime) - 0.5) * 0.05 * scanlineGlitch,
+      0.0
     );
 
-    vec3 ominousLight = lightColor * lightIntensity;
+    // HEAVY REALITY WARPING around cracks
+    vec2 crackGradient = vec2(
+      getCrackPattern(centeredUV + vec2(0.01, 0.0), time) - getCrackPattern(centeredUV - vec2(0.01, 0.0), time),
+      getCrackPattern(centeredUV + vec2(0.0, 0.01), time) - getCrackPattern(centeredUV - vec2(0.0, 0.01), time)
+    );
 
-    // Digital glitch artifacts
-    float digitalGlitch = hash(floor(gl_FragCoord.x * 0.5) + floor(gl_FragCoord.y * 0.5) + glitchTime);
-    vec3 glitchColor = vec3(digitalGlitch * 0.2 * glitchStrength * radialFade);
+    // Distort heavily along crack edges - Dr. Strange kaleidoscope effect
+    float distortionStrength = cracks * 0.15 * pulse;
+    vec2 distortedUV = screenUV;
+    distortedUV += crackGradient * distortionStrength;
+    distortedUV += vec2(sin(centeredUV.y * 30.0 + time * 2.0), cos(centeredUV.x * 30.0 - time * 2.0)) * distortionStrength * 0.5;
+    distortedUV += glitchOffset * radialFade;
 
-    // Glitchy/stuttering boundary
-    float boundaryGlitch = smoothstep(craterRadius * 1.2, craterRadius * 1.15, distFromCrater);
-    boundaryGlitch *= step(hash(glitchTime + floor(atan(centeredUV.y, centeredUV.x) * 8.0)), 0.7);
+    // CHROMATIC ABERRATION (RGB split) - pulsing
+    float aberration = 0.015 * radialFade * cracks * fastPulse;
+    vec3 distortedColor;
+    distortedColor.r = texture2D(tDiffuse, distortedUV + vec2(aberration, aberration * 0.5)).r;
+    distortedColor.g = texture2D(tDiffuse, distortedUV).g;
+    distortedColor.b = texture2D(tDiffuse, distortedUV - vec2(aberration, aberration * 0.5)).b;
 
-    // Combine: distorted stars + ominous light + glitch
-    vec3 finalColor = refractedColor;
-    finalColor += ominousLight * radialFade;
-    finalColor += glitchColor;
-    finalColor = mix(finalColor, vec3(0.0), boundaryGlitch * 0.3);
+    // OTHERWORLDLY PURPLE/BLUE GLOW from cracks (reality bleeding through)
+    float glowIntensity = cracks * 3.0 * pulse * intensity;
+
+    // Purple/blue cosmic horror color - pulsing between shades
+    vec3 purpleBlue1 = vec3(0.4, 0.2, 0.9);  // Deep purple
+    vec3 purpleBlue2 = vec3(0.2, 0.5, 1.0);  // Electric blue
+    vec3 glowColor = mix(purpleBlue1, purpleBlue2, sin(time * 3.0 + cracks * 10.0) * 0.5 + 0.5);
+
+    // Add ethereal white-hot core to cracks
+    glowColor = mix(glowColor, vec3(1.2, 1.1, 1.3), smoothstep(0.8, 1.0, cracks) * fastPulse);
+
+    vec3 ominousGlow = glowColor * glowIntensity;
+
+    // DIGITAL GLITCH ARTIFACTS - TV static style
+    float staticNoise = hash2(screenUV * resolution * 0.1 + time * 20.0) * pixelGlitch * radialFade * 0.3;
+
+    // Pixel corruption along cracks
+    float corruption = step(0.9, hash2(pixelUV + cracks * 10.0)) * glitchStrength * radialFade * 0.4;
+
+    // Reality warping - color inversion flicker
+    float colorFlip = step(0.97, hash(glitchTime + cracks * 5.0)) * radialFade;
+
+    // COMBINE ALL EFFECTS
+    vec3 finalColor = distortedColor;
+
+    // Add otherworldly glow from cracks
+    finalColor += ominousGlow;
+
+    // Add glitch artifacts
+    finalColor += vec3(staticNoise);
+    finalColor = mix(finalColor, vec3(corruption), corruption);
+
+    // Color flip glitch
+    finalColor = mix(finalColor, vec3(1.0) - finalColor, colorFlip * 0.6);
+
+    // Subtle boundary distortion
+    float boundaryGlitch = smoothstep(craterRadius * 1.3, craterRadius * 1.2, distFromCrater);
+    boundaryGlitch *= step(0.8, hash(glitchTime + floor(atan(centeredUV.y, centeredUV.x) * 16.0)));
+    finalColor = mix(finalColor, finalColor * 0.7, boundaryGlitch * 0.4);
 
     gl_FragColor = vec4(finalColor, 1.0);
   }
@@ -849,7 +887,7 @@ class SceneManager {
         time: { value: 0 },
         intensity: { value: 0.0 }, // Start at 0, will fade in
         craterCenter: { value: new THREE.Vector2(0.5, 0.5) }, // Will be updated each frame
-        craterRadius: { value: 0.3 }, // Screen space radius
+        craterRadius: { value: 0.15 }, // Screen space radius - 15% of screen
       },
       vertexShader: RefractionShardVertexShader,
       fragmentShader: RealityCrackFragmentShader,
