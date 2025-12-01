@@ -314,26 +314,42 @@ const RealityCrackFragmentShader = `
     float pulse = sin(time * 2.5) * 0.4 + 0.6;
     float fastPulse = sin(time * 5.0) * 0.3 + 0.7;
 
-    // SIMPLE GUARANTEED VISIBLE CRACKS
+    // ENHANCED CRACKED-GLASS EFFECT - Multiple crack layers
     float angle = atan(centeredUV.y, centeredUV.x);
     float radius = length(centeredUV);
 
-    // 12 THICK RADIAL CRACKS
+    // PRIMARY: 15 THICK RADIAL CRACKS (main impact rays)
     float cracks = 0.0;
-    for(int i = 0; i < 12; i++) {
-      float rayAngle = float(i) * 0.523599; // 30 degrees
+    for(int i = 0; i < 15; i++) {
+      float rayAngle = float(i) * 0.418879; // 24 degrees
       float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
-      // THICK visible rays
-      float ray = step(angleDiff, 0.15) * (1.0 - smoothstep(0.05, 0.5, radius));
-      cracks = max(cracks, ray);
+      // VERY THICK visible rays
+      float ray = smoothstep(0.18, 0.0, angleDiff) * (1.0 - smoothstep(0.02, 0.65, radius));
+      cracks = max(cracks, ray * 0.9);
     }
 
-    // Add noise-based cracks
-    float n = snoise3d(vec3(centeredUV * 10.0, time * 0.3));
-    cracks = max(cracks, step(0.3, abs(n)));
+    // SECONDARY: Intersecting angular cracks (like broken glass)
+    for(int i = 0; i < 8; i++) {
+      float rayAngle = float(i) * 0.785398 + 0.2; // 45 degrees offset
+      float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
+      float ray = smoothstep(0.12, 0.0, angleDiff) * (1.0 - smoothstep(0.1, 0.5, radius));
+      cracks = max(cracks, ray * 0.7);
+    }
 
-    // ALWAYS VISIBLE - no intensity dependency
-    cracks = cracks * radialFade;
+    // TERTIARY: Fine fracture network
+    vec2 crackUV = centeredUV * 15.0;
+    float fineCracks = 0.0;
+    fineCracks += smoothstep(0.92, 0.88, abs(sin(crackUV.x + crackUV.y * 1.3 + time * 0.2))) * 0.5;
+    fineCracks += smoothstep(0.94, 0.90, abs(sin(crackUV.x * 1.7 - crackUV.y * 0.9))) * 0.4;
+    fineCracks += smoothstep(0.96, 0.92, abs(cos(crackUV.x * 2.1 + crackUV.y * 1.1))) * 0.3;
+    cracks = max(cracks, fineCracks * (1.0 - smoothstep(0.0, 0.6, radius)));
+
+    // NOISE-BASED organic cracks
+    float n = snoise3d(vec3(centeredUV * 12.0, time * 0.3));
+    cracks = max(cracks, smoothstep(0.5, 0.2, abs(n)) * 0.6);
+
+    // Apply radial fade with enhanced visibility
+    cracks = cracks * radialFade * 1.3; // Boosted by 30%
 
     // SUPER SCI-FI GLITCH EFFECTS
     float glitchTime = floor(time * 12.0);
@@ -374,16 +390,16 @@ const RealityCrackFragmentShader = `
     distortedColor.b = texture2D(tDiffuse, distortedUV - vec2(aberration, aberration * 0.5)).b;
 
     // OTHERWORLDLY PURPLE/BLUE GLOW from cracks (reality bleeding through)
-    // SUPER BRIGHT - no intensity dependency
-    float glowIntensity = cracks * 15.0 * pulse;
+    // SUPER BRIGHT - enhanced for more prominent shattered reality effect
+    float glowIntensity = cracks * 20.0 * pulse; // Increased from 15.0 to 20.0
 
     // Purple/blue cosmic horror color - pulsing between shades
-    vec3 purpleBlue1 = vec3(0.6, 0.3, 1.2);  // BRIGHT Deep purple
-    vec3 purpleBlue2 = vec3(0.3, 0.7, 1.5);  // BRIGHT Electric blue
+    vec3 purpleBlue1 = vec3(0.8, 0.4, 1.5);  // BRIGHTER Deep purple
+    vec3 purpleBlue2 = vec3(0.5, 0.9, 1.8);  // BRIGHTER Electric blue
     vec3 glowColor = mix(purpleBlue1, purpleBlue2, sin(time * 3.0) * 0.5 + 0.5);
 
-    // Add ethereal white-hot core to cracks
-    glowColor = mix(glowColor, vec3(1.5, 1.4, 1.6), cracks * fastPulse);
+    // Add ethereal white-hot core to cracks for glass-like shimmer
+    glowColor = mix(glowColor, vec3(1.8, 1.7, 2.0), cracks * fastPulse * 0.8);
 
     vec3 ominousGlow = glowColor * glowIntensity;
 
@@ -747,7 +763,8 @@ class SceneManager {
       colors[i * 3 + 1] = 0.8 + temp * 0.2;
       colors[i * 3 + 2] = 0.9 + temp * 0.1;
 
-      sizes[i] = Math.random() * 2 + 0.5;
+      // Reduced star size range for realistic starry sky (from 0.5-2.5 to 0.2-0.8)
+      sizes[i] = Math.random() * 0.6 + 0.2;
     }
 
     // Store original positions for gravitational pull effect
@@ -758,7 +775,7 @@ class SceneManager {
     starGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
     const starMaterial = new THREE.PointsMaterial({
-      size: 0.5,
+      size: 0.25, // Reduced from 0.5 to 0.25 for smaller, more realistic stars
       vertexColors: true,
       transparent: true,
       opacity: 1,
@@ -771,8 +788,8 @@ class SceneManager {
   }
 
   createMeteor() {
-    // Reduced size by 40% (from 2 to 1.2)
-    const geometry = new THREE.IcosahedronGeometry(1.2, 3);
+    // Reduced size by 50% (from 1.2 to 0.6)
+    const geometry = new THREE.IcosahedronGeometry(0.6, 3);
 
     this.meteorMaterial = new THREE.ShaderMaterial({
       uniforms: {
@@ -791,8 +808,8 @@ class SceneManager {
     this.meteorMesh.visible = false;
     this.scene.add(this.meteorMesh);
 
-    // Add meteor glow (proportionally reduced)
-    const glowGeometry = new THREE.IcosahedronGeometry(2.1, 2);
+    // Add meteor glow (proportionally reduced by 50%)
+    const glowGeometry = new THREE.IcosahedronGeometry(1.05, 2);
     const glowMaterial = new THREE.MeshBasicMaterial({
       color: 0xff8844,
       transparent: true,
