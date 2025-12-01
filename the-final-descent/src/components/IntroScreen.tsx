@@ -601,9 +601,9 @@ class SceneManager {
     });
 
     this.meteorMesh = new THREE.Mesh(geometry, this.meteorMaterial);
-    // Start position adjusted for 60-degree angle approach
-    this.meteorMesh.position.set(20, 80, -40);
-    this.meteorMesh.scale.set(0.1, 0.1, 0.1); // Start small
+    // Start far away, high up - will fall at 60-degree angle toward viewer
+    this.meteorMesh.position.set(0, 100, -200);
+    this.meteorMesh.scale.set(0.05, 0.05, 0.05); // Start very small
     this.meteorMesh.visible = false;
     this.scene.add(this.meteorMesh);
 
@@ -630,7 +630,7 @@ class SceneManager {
 
   createImpactEffects() {
     console.log('Creating impact effects');
-    const impactPoint = new THREE.Vector3(7, -15, 2);
+    const impactPoint = new THREE.Vector3(0, -20, -170);
 
     // Massive explosion burst with debris
     const debrisVelocity = new THREE.Vector3(0, 0, 0);
@@ -687,9 +687,9 @@ class SceneManager {
   createShatteredGlass() {
     console.log('Creating shattered glass effect');
 
-    // Generate shards around impact point (7, -15, 2)
+    // Generate shards around impact point (0, -20, -170)
     const shardCount = 35;
-    const impactCenter = new THREE.Vector2(7, 2);
+    const impactCenter = new THREE.Vector2(0, -170);
     const points: THREE.Vector2[] = [];
 
     // Create layered distribution for more density
@@ -735,7 +735,7 @@ class SceneManager {
       });
 
       const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.set(point.x, -15, point.y);
+      mesh.position.set(point.x, -20, point.y);
       mesh.rotation.x = -Math.PI / 2 + (Math.random() - 0.5) * 0.3;
       mesh.rotation.z = Math.random() * Math.PI * 2;
       mesh.visible = false;
@@ -764,17 +764,17 @@ class SceneManager {
       const elapsed = this.timeline.time - this.timeline.meteorStartTime;
       const progress = Math.min(elapsed / 1.0, 1.0); // 1 second descent
 
-      // Animate meteor on 60-degree angle trajectory (starts far, falls toward viewer)
-      // Path: (20, 80, -40) → (7, -15, 2)
-      const startPos = new THREE.Vector3(20, 80, -40);
-      const endPos = new THREE.Vector3(7, -15, 2);
+      // 60-degree angle trajectory - falls toward viewer, lands far in distance
+      // Camera at (0, 0, 30), impact ~170 units away at (0, -20, -170)
+      const startPos = new THREE.Vector3(0, 100, -200);
+      const endPos = new THREE.Vector3(0, -20, -170);
 
       this.meteorMesh.position.lerpVectors(startPos, endPos, progress);
       this.meteorMesh.rotation.x += deltaTime * 2.5;
       this.meteorMesh.rotation.y += deltaTime * 1.8;
 
-      // Perspective scaling - starts small (0.1), grows to full size (1.0)
-      const scale = 0.1 + progress * 0.9;
+      // Perspective scaling - starts tiny (0.05), grows as it approaches
+      const scale = 0.05 + progress * 0.95;
       this.meteorMesh.scale.set(scale, scale, scale);
 
       // Update meteor shader
@@ -822,7 +822,7 @@ class SceneManager {
       }
 
       // Impact detection - when meteor reaches ground
-      if (this.meteorMesh.position.y <= -15 || progress >= 1.0) {
+      if (this.meteorMesh.position.y <= -20 || progress >= 1.0) {
         this.timeline.phase = 'impact';
         this.timeline.impactTime = this.timeline.time;
         this.meteorMesh.visible = false;
@@ -893,7 +893,7 @@ class SceneManager {
 
             // Subtle animation - shards slowly float up
             const shardElapsed = impactElapsed - (0.15 + shardDelay);
-            shard.position.y = -15 + shardElapsed * 0.3;
+            shard.position.y = -20 + shardElapsed * 0.3;
             shard.rotation.z += deltaTime * 0.5;
           }
         });
