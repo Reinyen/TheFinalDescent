@@ -103,43 +103,50 @@ const CometFragmentShader = `
   }
 
   void main() {
-    // Fresnel for edge glow
+    // REALISTIC rocky asteroid texture
+    float rockNoise1 = hash(vPosition * 3.0);
+    float rockNoise2 = hash(vPosition * 7.0);
+    float rockNoise3 = hash(vPosition * 15.0);
+
+    // Multi-scale noise for realistic rock surface
+    float combinedNoise = rockNoise1 * 0.5 + rockNoise2 * 0.3 + rockNoise3 * 0.2;
+
+    // Realistic asteroid colors - dark gray with subtle brown/tan variations
+    vec3 darkGray = vec3(0.12, 0.11, 0.10);    // Very dark charcoal
+    vec3 mediumGray = vec3(0.20, 0.18, 0.16);  // Medium gray
+    vec3 lightGray = vec3(0.28, 0.25, 0.22);   // Lighter gray-brown
+    vec3 tanColor = vec3(0.25, 0.20, 0.15);    // Subtle tan
+
+    // Mix rock colors based on noise
+    vec3 rockColor = mix(darkGray, mediumGray, rockNoise1);
+    rockColor = mix(rockColor, lightGray, rockNoise2 * 0.5);
+    rockColor = mix(rockColor, tanColor, rockNoise3 * 0.3);
+
+    // Fresnel for edge definition
     vec3 viewDir = normalize(cameraPosition - vPosition);
-    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.0);
+    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 1.5);
 
-    // REALISTIC rocky asteroid base - gray/brown with variation
-    float rockVariation = hash(vPosition * 2.0);
-    vec3 darkRock = vec3(0.15, 0.13, 0.12); // Dark charcoal
-    vec3 lightRock = vec3(0.25, 0.22, 0.20); // Lighter gray-brown
-    vec3 rockColor = mix(darkRock, lightRock, rockVariation);
+    // Realistic atmospheric entry heat - orange/red on leading edge
+    vec3 heatColor = vec3(1.0, 0.3, 0.05); // Bright orange-red
 
-    // Cosmic horror heat - starts SUBTLE, becomes supernatural
-    // At low intensity: realistic orange/red heat
-    // At high intensity: purple/teal/green cosmic colors
-    vec3 realisticHeat = vec3(1.0, 0.4, 0.1); // Orange-red
-    vec3 cosmicPurple = vec3(0.6, 0.2, 0.8);   // Purple
-    vec3 cosmicTeal = vec3(0.2, 0.7, 0.7);     // Teal
-    vec3 cosmicGreen = vec3(0.4, 0.9, 0.5);    // Eerie green
-
-    // Mix heat colors - realistic at low intensity, cosmic at high
-    vec3 heatColor = realisticHeat;
-    if (heatIntensity > 0.3) {
-      float cosmicMix = (heatIntensity - 0.3) / 0.7; // 0 to 1
-      heatColor = mix(realisticHeat, cosmicPurple, cosmicMix * 0.5);
-      heatColor = mix(heatColor, cosmicTeal, cosmicMix * cosmicMix * 0.3);
-      heatColor = mix(heatColor, cosmicGreen, sin(time * 2.0) * 0.5 + 0.5 * cosmicMix * 0.2);
-    }
-
-    // Apply heat primarily to edges (fresnel) for realistic atmospheric heating
+    // Only add heat if intensity is significant
     vec3 finalColor = rockColor;
-    finalColor = mix(finalColor, heatColor, fresnel * heatIntensity * 0.8);
+    if (heatIntensity > 0.1) {
+      // Heat concentrated on leading edge (fresnel)
+      float heatAmount = fresnel * heatIntensity;
 
-    // Add bright rim glow
-    vec3 rimColor = mix(vec3(1.0, 0.6, 0.3), heatColor, heatIntensity);
-    finalColor += rimColor * fresnel * fresnel * heatIntensity * 3.0;
+      // Add cosmic horror tint only at very high intensity
+      if (heatIntensity > 0.6) {
+        vec3 cosmicPurple = vec3(0.5, 0.1, 0.6);
+        float cosmicMix = (heatIntensity - 0.6) / 0.4;
+        heatColor = mix(heatColor, cosmicPurple, cosmicMix * 0.3);
+      }
 
-    // Subtle emissive glow for cosmic horror effect
-    finalColor += heatColor * heatIntensity * 0.2;
+      finalColor = mix(finalColor, heatColor, heatAmount * 0.6);
+
+      // Bright rim only at very edge
+      finalColor += heatColor * pow(fresnel, 4.0) * heatIntensity * 1.5;
+    }
 
     gl_FragColor = vec4(finalColor, 1.0);
   }
@@ -206,92 +213,120 @@ const RealityCrackShader = {
 
     float hash(float n) { return fract(sin(n) * 43758.5453123); }
 
+    // Hash functions for randomness
+    float hash21(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    }
+
+    vec2 hash22(vec2 p) {
+      p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+      return fract(sin(p) * 43758.5453123);
+    }
+
+    // Voronoi cell calculation - creates glass shard boundaries
+    vec3 voronoi(vec2 x) {
+      vec2 n = floor(x);
+      vec2 f = fract(x);
+
+      vec2 mg, mr;
+      float md = 8.0;
+
+      for(int j = -1; j <= 1; j++) {
+        for(int i = -1; i <= 1; i++) {
+          vec2 g = vec2(float(i), float(j));
+          vec2 o = hash22(n + g);
+          vec2 r = g + o - f;
+          float d = dot(r, r);
+
+          if(d < md) {
+            md = d;
+            mr = r;
+            mg = g;
+          }
+        }
+      }
+
+      return vec3(md, mr);
+    }
+
     void main() {
       vec2 uv = vUv;
       vec2 fromCenter = uv - craterCenter;
       float distFromCrater = length(fromCenter);
 
-      // Radial fade - VERY visible at center, fades to normal at edges
-      // Larger radius for more prominent effect
-      float radialFade = smoothstep(0.35, 0.0, distFromCrater);
+      // Effect radius - very visible at center, fades out
+      float radialFade = smoothstep(0.4, 0.0, distFromCrater);
       radialFade = radialFade * intensity;
 
       if (radialFade < 0.001) {
-        // Outside effect - normal rendering
         gl_FragColor = texture2D(tDiffuse, uv);
         return;
       }
 
-      // GLASS CRACK PATTERN - MUCH MORE VISIBLE
+      // Create glass shards using Voronoi cells
+      float shardScale = 15.0; // Size of glass fragments
+      vec2 shardUV = (uv - craterCenter) * shardScale;
+      vec3 voronoiData = voronoi(shardUV);
+      float cellDist = voronoiData.x;
+
+      // VISIBLE CRACK LINES - dark boundaries between shards
+      float crackWidth = 0.02;
+      float crackLine = smoothstep(crackWidth, 0.0, cellDist);
+
+      // RADIAL IMPACT CRACKS - main fracture rays from impact
       float angle = atan(fromCenter.y, fromCenter.x);
       float radius = distFromCrater;
 
-      float cracks = 0.0;
-
-      // Primary radial cracks (18 main rays for denser pattern)
-      for(int i = 0; i < 18; i++) {
-        float rayAngle = float(i) * 0.349066; // 20 degrees
+      float radialCracks = 0.0;
+      for(int i = 0; i < 20; i++) {
+        float rayAngle = float(i) * 0.314159; // ~18 degrees
         float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
-        // MUCH THICKER cracks
-        float ray = smoothstep(0.15, 0.0, angleDiff) * (1.0 - smoothstep(0.0, 0.3, radius));
-        cracks = max(cracks, ray * 1.5); // BOOSTED intensity
+        float ray = smoothstep(0.08, 0.0, angleDiff) * (1.0 - smoothstep(0.0, 0.35, radius));
+        radialCracks = max(radialCracks, ray);
       }
 
-      // Secondary cracks (12 offset rays)
-      for(int i = 0; i < 12; i++) {
-        float rayAngle = float(i) * 0.523599 + 0.174533;
-        float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
-        float ray = smoothstep(0.12, 0.0, angleDiff) * (1.0 - smoothstep(0.05, 0.25, radius));
-        cracks = max(cracks, ray * 1.2);
-      }
+      // Combine Voronoi cracks with radial cracks
+      float allCracks = max(crackLine, radialCracks);
 
-      // Tertiary fine cracks for glass-like texture
-      for(int i = 0; i < 8; i++) {
-        float rayAngle = float(i) * 0.785398 + 0.3927;
-        float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
-        float ray = smoothstep(0.08, 0.0, angleDiff) * (1.0 - smoothstep(0.08, 0.18, radius));
-        cracks = max(cracks, ray * 0.9);
-      }
+      // Each glass shard has its own distortion
+      vec2 cellCenter = hash22(floor(shardUV));
+      float shardRotation = hash21(floor(shardUV)) * 6.28318;
 
-      cracks = cracks * radialFade;
+      // Rotate and offset each shard slightly
+      vec2 shardOffset = vec2(
+        cos(shardRotation),
+        sin(shardRotation)
+      ) * allCracks * radialFade * 0.015;
 
-      // REALITY WARPING - MUCH MORE DRAMATIC distortion
-      vec2 warpOffset = fromCenter * cracks * 0.08 * sin(time * 2.0);
-      vec2 distortedUV = uv + warpOffset;
+      // Apply shard-specific distortion
+      vec2 distortedUV = uv + shardOffset;
 
-      // Additional kaleidoscope-style warping
-      float warpStrength = cracks * radialFade * 0.05;
-      distortedUV += vec2(
-        sin(uv.y * 20.0 + time) * warpStrength,
-        cos(uv.x * 20.0 - time) * warpStrength
+      // Add per-shard chromatic aberration
+      float shardAberration = radialFade * 0.008;
+      vec3 color;
+      color.r = texture2D(tDiffuse, distortedUV + vec2(shardAberration, 0.0)).r;
+      color.g = texture2D(tDiffuse, distortedUV).g;
+      color.b = texture2D(tDiffuse, distortedUV - vec2(shardAberration, 0.0)).b;
+
+      // DARK crack lines for realistic glass appearance
+      vec3 crackColor = vec3(0.0, 0.0, 0.0); // Black cracks
+      color = mix(color, crackColor, allCracks * 0.8);
+
+      // Subtle glow ONLY along crack edges (cosmic horror touch)
+      vec3 glowColor = mix(
+        vec3(0.6, 0.2, 0.8),  // Purple
+        vec3(0.2, 0.8, 0.7),  // Teal
+        sin(time * 2.0) * 0.5 + 0.5
       );
 
-      // CHROMATIC ABERRATION - MUCH MORE VISIBLE
-      float aberration = cracks * radialFade * 0.025;
-      vec3 refracted;
-      refracted.r = texture2D(tDiffuse, distortedUV + vec2(aberration, aberration * 0.5)).r;
-      refracted.g = texture2D(tDiffuse, distortedUV).g;
-      refracted.b = texture2D(tDiffuse, distortedUV - vec2(aberration, aberration * 0.5)).b;
+      // Glow only on crack edges, not everywhere
+      float edgeGlow = allCracks * (1.0 - allCracks) * 4.0; // Peaks at crack edges
+      color += glowColor * edgeGlow * radialFade * 0.5;
 
-      // COSMIC HORROR GLOW from cracks - SUPER BRIGHT
-      vec3 glowColor1 = vec3(0.8, 0.3, 1.0); // Bright Purple
-      vec3 glowColor2 = vec3(0.3, 1.0, 0.9); // Bright Teal
-      vec3 glowColor3 = vec3(0.5, 1.0, 0.6); // Bright Green
+      // Darken/desaturate shattered area slightly
+      color = mix(color, color * 0.85, radialFade * 0.3);
 
-      float pulse = sin(time * 3.0) * 0.5 + 0.5;
-      vec3 glowColor = mix(glowColor1, glowColor2, pulse);
-      glowColor = mix(glowColor, glowColor3, sin(time * 1.5) * 0.5 + 0.5);
-
-      // MASSIVELY BOOSTED glow intensity
-      vec3 crackGlow = glowColor * cracks * radialFade * 25.0;
-
-      // Add white-hot core to cracks
-      crackGlow += vec3(1.5, 1.4, 1.5) * cracks * cracks * radialFade * 15.0;
-
-      // Combine
-      vec3 finalColor = refracted + crackGlow;
-
-      gl_FragColor = vec4(finalColor, 1.0);
+      gl_FragColor = vec4(color, 1.0);
     }
   `
 };
@@ -468,6 +503,28 @@ class SceneManager {
     window.addEventListener('resize', () => this.handleResize());
   }
 
+  createStarTexture() {
+    // Create crisp circular texture for stars
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d')!;
+
+    // Draw crisp white circle
+    const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    gradient.addColorStop(0.4, 'rgba(255, 255, 255, 1)');
+    gradient.addColorStop(0.6, 'rgba(255, 255, 255, 0.5)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 32, 32);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
+  }
+
   createStarfield() {
     const starGeometry = new THREE.BufferGeometry();
     const starCount = 3000;
@@ -508,13 +565,14 @@ class SceneManager {
     starGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
     const starMaterial = new THREE.PointsMaterial({
-      size: 0.8, // MUCH LARGER for crisp visibility
+      size: 0.3, // Small and CRISP - not pixelated blobs
       vertexColors: true,
       transparent: true,
       opacity: 0,
       sizeAttenuation: true,
       blending: THREE.NormalBlending,
       depthWrite: false,
+      map: this.createStarTexture(), // Use circle texture for crisp edges
     });
 
     this.starfield = new THREE.Points(starGeometry, starMaterial);
