@@ -1,381 +1,614 @@
 /**
- * Intro Screen - Animated starfield telling the catastrophe story
+ * IntroScreen - AAA-Quality Three.js Cinematic Experience
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { EffectComposer, Bloom, ChromaticAberration, Noise } from '@react-three/postprocessing';
+import { BlendFunction } from 'postprocessing';
+import * as THREE from 'three';
 
-interface Star {
-  x: number;
-  y: number;
-  size: number;
-  brightness: number;
-  twinkleSpeed: number;
-  twinklePhase: number;
-  falling?: boolean;
-  fallSpeed?: number;
-  pulledByMeteor?: boolean;
+// Starfield with depth
+function Starfield() {
+  const starsRef = useRef<THREE.Points>(null);
+  const [geometry] = useState(() => {
+    const geo = new THREE.BufferGeometry();
+    const positions = [];
+    const colors = [];
+    const sizes = [];
+
+    for (let i = 0; i < 2000; i++) {
+      // Distribute stars in 3D space for depth
+      positions.push(
+        (Math.random() - 0.5) * 100,
+        (Math.random() - 0.5) * 100,
+        (Math.random() - 0.5) * 50 - 10 // Depth
+      );
+
+      const color = new THREE.Color();
+      color.setHSL(0.6 + Math.random() * 0.1, 0.2, 0.8 + Math.random() * 0.2);
+      colors.push(color.r, color.g, color.b);
+
+      sizes.push(Math.random() * 2 + 0.5);
+    }
+
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+    return geo;
+  });
+
+  useFrame((state) => {
+    if (!starsRef.current) return;
+    const time = state.clock.getElapsedTime();
+
+    // Animate star brightness (twinkling)
+    const positions = starsRef.current.geometry.attributes.position.array as Float32Array;
+    const colors = starsRef.current.geometry.attributes.color.array as Float32Array;
+
+    for (let i = 0; i < positions.length / 3; i++) {
+      const twinkle = Math.sin(time * 2 + i * 0.1) * 0.3 + 0.7;
+      colors[i * 3] = (0.8 + Math.random() * 0.2) * twinkle;
+      colors[i * 3 + 1] = (0.8 + Math.random() * 0.2) * twinkle;
+      colors[i * 3 + 2] = (0.9 + Math.random() * 0.1) * twinkle;
+    }
+
+    starsRef.current.geometry.attributes.color.needsUpdate = true;
+  });
+
+  return (
+    <points ref={starsRef} geometry={geometry}>
+      <pointsMaterial
+        size={0.15}
+        vertexColors
+        transparent
+        opacity={1}
+        sizeAttenuation
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
+  );
 }
 
-interface VoidCrack {
-  x: number;
-  y: number;
-  angle: number;
-  length: number;
-  growth: number;
+// Main meteor
+function Meteor({ onImpact }: { onImpact: () => void }) {
+  const meteorRef = useRef<THREE.Group>(null);
+  const trailRef = useRef<THREE.Points>(null);
+  const [active, setActive] = useState(false);
+  const startTime = useRef(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setActive(true);
+      startTime.current = Date.now() / 1000;
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useFrame((state) => {
+    if (!active || !meteorRef.current) return;
+
+    const elapsed = state.clock.getElapsedTime() - startTime.current;
+    const speed = 0.3;
+
+    meteorRef.current.position.y = 30 - elapsed * speed * 60;
+
+    // Impact detection
+    if (meteorRef.current.position.y < -15) {
+      setActive(false);
+      onImpact();
+    }
+
+    // Update trail
+    if (trailRef.current) {
+      const positions = trailRef.current.geometry.attributes.position.array as Float32Array;
+      for (let i = positions.length - 3; i > 2; i -= 3) {
+        positions[i] = positions[i - 3];
+        positions[i + 1] = positions[i - 2];
+        positions[i + 2] = positions[i - 1];
+      }
+      positions[0] = meteorRef.current.position.x;
+      positions[1] = meteorRef.current.position.y;
+      positions[2] = meteorRef.current.position.z;
+      trailRef.current.geometry.attributes.position.needsUpdate = true;
+    }
+  });
+
+  if (!active) return null;
+
+  // Trail geometry
+  const trailPositions = new Float32Array(300);
+  const trailGeometry = new THREE.BufferGeometry();
+  trailGeometry.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+
+  return (
+    <group ref={meteorRef} position={[0, 30, 0]}>
+      {/* Meteor core */}
+      <mesh>
+        <sphereGeometry args={[0.5, 16, 16]} />
+        <meshBasicMaterial color="#ffffff" />
+      </mesh>
+
+      {/* Meteor glow */}
+      <mesh>
+        <sphereGeometry args={[1.5, 16, 16]} />
+        <meshBasicMaterial
+          color="#ffaa44"
+          transparent
+          opacity={0.6}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {/* Outer glow */}
+      <mesh>
+        <sphereGeometry args={[2.5, 16, 16]} />
+        <meshBasicMaterial
+          color="#ff6622"
+          transparent
+          opacity={0.3}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {/* Trail */}
+      <points ref={trailRef} geometry={trailGeometry}>
+        <pointsMaterial
+          size={0.3}
+          color="#ffaa44"
+          transparent
+          opacity={0.8}
+          blending={THREE.AdditiveBlending}
+        />
+      </points>
+    </group>
+  );
 }
 
+// Particle explosion system
+function ExplosionParticles({ trigger }: { trigger: boolean }) {
+  const particlesRef = useRef<THREE.Points>(null);
+  const velocities = useRef<Float32Array | null>(null);
+
+  const [geometry] = useState(() => {
+    const geo = new THREE.BufferGeometry();
+    const positions = [];
+    const colors = [];
+    const sizes = [];
+
+    for (let i = 0; i < 2000; i++) {
+      positions.push(0, -15, 0);
+
+      // Mix of orange fire and purple void
+      if (Math.random() < 0.6) {
+        colors.push(1, 0.5 + Math.random() * 0.3, 0.1);
+      } else {
+        colors.push(0.6, 0.3, 0.8 + Math.random() * 0.2);
+      }
+
+      sizes.push(Math.random() * 0.3 + 0.1);
+    }
+
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+    // Create velocities
+    const vels = new Float32Array(positions.length);
+    for (let i = 0; i < positions.length; i += 3) {
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.random() * Math.PI;
+      const speed = Math.random() * 0.5 + 0.2;
+
+      vels[i] = Math.sin(phi) * Math.cos(theta) * speed;
+      vels[i + 1] = Math.abs(Math.cos(phi)) * speed * 0.5 + 0.3;
+      vels[i + 2] = Math.sin(phi) * Math.sin(theta) * speed;
+    }
+    velocities.current = vels;
+
+    return geo;
+  });
+
+  useFrame(() => {
+    if (!trigger || !particlesRef.current || !velocities.current) return;
+
+    const positions = particlesRef.current.geometry.attributes.position.array as Float32Array;
+    const sizes = particlesRef.current.geometry.attributes.size.array as Float32Array;
+
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i] += velocities.current[i];
+      positions[i + 1] += velocities.current[i + 1];
+      positions[i + 2] += velocities.current[i + 2];
+
+      velocities.current[i + 1] -= 0.01; // Gravity
+      velocities.current[i] *= 0.99;
+      velocities.current[i + 2] *= 0.99;
+
+      sizes[i / 3] *= 0.99;
+    }
+
+    particlesRef.current.geometry.attributes.position.needsUpdate = true;
+    particlesRef.current.geometry.attributes.size.needsUpdate = true;
+  });
+
+  if (!trigger) return null;
+
+  return (
+    <points ref={particlesRef} geometry={geometry}>
+      <pointsMaterial
+        vertexColors
+        transparent
+        opacity={0.9}
+        sizeAttenuation
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
+  );
+}
+
+// Shattered glass fragments
+function ShatteredGlass({ trigger }: { trigger: boolean }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const [fragments] = useState(() => {
+    const frags = [];
+    for (let i = 0; i < 50; i++) {
+      const angle = (i / 50) * Math.PI - Math.PI / 2;
+      const distance = 3 + Math.random() * 2;
+      const shape = new THREE.Shape();
+
+      // Create irregular polygon
+      const sides = 5 + Math.floor(Math.random() * 3);
+      const size = 0.3 + Math.random() * 0.2;
+
+      for (let j = 0; j < sides; j++) {
+        const a = (j / sides) * Math.PI * 2;
+        const r = size * (0.7 + Math.random() * 0.3);
+        const x = Math.cos(a) * r;
+        const y = Math.sin(a) * r;
+
+        if (j === 0) shape.moveTo(x, y);
+        else shape.lineTo(x, y);
+      }
+      shape.closePath();
+
+      frags.push({
+        shape,
+        position: [
+          Math.cos(angle) * distance,
+          -15 + Math.sin(angle) * distance * 0.5,
+          (Math.random() - 0.5) * 2
+        ] as [number, number, number],
+        rotation: [Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI] as [number, number, number],
+        rotationSpeed: [(Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.02] as [number, number, number],
+      });
+    }
+    return frags;
+  });
+
+  useFrame(() => {
+    if (!trigger || !groupRef.current) return;
+
+    groupRef.current.children.forEach((child, i) => {
+      const frag = fragments[i];
+      child.rotation.x += frag.rotationSpeed[0];
+      child.rotation.y += frag.rotationSpeed[1];
+      child.rotation.z += frag.rotationSpeed[2];
+    });
+  });
+
+  if (!trigger) return null;
+
+  return (
+    <group ref={groupRef}>
+      {fragments.map((frag, i) => (
+        <mesh key={i} position={frag.position} rotation={frag.rotation}>
+          <shapeGeometry args={[frag.shape]} />
+          <meshBasicMaterial
+            color="#8844ff"
+            transparent
+            opacity={0.6}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+// Volumetric light beams from crater
+function VoidBeams({ trigger }: { trigger: boolean }) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  useFrame((state) => {
+    if (!trigger || !groupRef.current) return;
+    const time = state.clock.getElapsedTime();
+
+    groupRef.current.children.forEach((child, i) => {
+      const pulse = Math.sin(time * 2 + i * 0.5) * 0.3 + 0.7;
+      (child as THREE.Mesh).material.opacity = 0.4 * pulse;
+    });
+  });
+
+  if (!trigger) return null;
+
+  const beams = [];
+  for (let i = 0; i < 20; i++) {
+    const angle = (i / 20) * Math.PI - Math.PI / 2;
+    const length = 8 + Math.random() * 4;
+
+    beams.push({
+      angle,
+      length,
+      width: 0.05 + Math.random() * 0.05,
+    });
+  }
+
+  return (
+    <group ref={groupRef} position={[0, -15, 0]}>
+      {beams.map((beam, i) => {
+        const geometry = new THREE.CylinderGeometry(beam.width, beam.width * 0.3, beam.length, 8, 1, true);
+        const material = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(0.5, 0.2, 0.8),
+          transparent: true,
+          opacity: 0.4,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+        });
+
+        return (
+          <mesh
+            key={i}
+            geometry={geometry}
+            material={material}
+            position={[
+              Math.cos(beam.angle) * 0.5,
+              beam.length / 2,
+              Math.sin(beam.angle) * 0.5
+            ]}
+            rotation={[0, 0, beam.angle + Math.PI / 2]}
+          />
+        );
+      })}
+    </group>
+  );
+}
+
+// Background meteors
+function BackgroundMeteors({ trigger }: { trigger: boolean }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const [meteors, setMeteors] = useState<Array<{
+    id: number;
+    position: THREE.Vector3;
+    velocity: THREE.Vector3;
+    size: number;
+    life: number;
+  }>>([]);
+
+  useEffect(() => {
+    if (!trigger) return;
+
+    const interval = setInterval(() => {
+      if (Math.random() < 0.7) {
+        const side = Math.random();
+        let pos, vel;
+
+        if (side < 0.33) {
+          pos = new THREE.Vector3(-20 + Math.random() * 15, 20 + Math.random() * 10, -10 + Math.random() * 5);
+          vel = new THREE.Vector3(0.3 + Math.random() * 0.2, -0.5 - Math.random() * 0.3, 0);
+        } else if (side < 0.66) {
+          pos = new THREE.Vector3(5 + Math.random() * 15, 20 + Math.random() * 10, -10 + Math.random() * 5);
+          vel = new THREE.Vector3(-0.3 - Math.random() * 0.2, -0.5 - Math.random() * 0.3, 0);
+        } else {
+          pos = new THREE.Vector3((Math.random() - 0.5) * 40, 20 + Math.random() * 10, -10 + Math.random() * 5);
+          vel = new THREE.Vector3((Math.random() - 0.5) * 0.4, -0.5 - Math.random() * 0.3, 0);
+        }
+
+        setMeteors(prev => [...prev, {
+          id: Date.now() + Math.random(),
+          position: pos,
+          velocity: vel,
+          size: 0.3 + Math.random() * 0.2,
+          life: 1,
+        }]);
+      }
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [trigger]);
+
+  useFrame(() => {
+    setMeteors(prev => prev.filter(m => {
+      m.position.add(m.velocity);
+      m.life -= 0.01;
+      return m.life > 0 && m.position.y > -10;
+    }));
+  });
+
+  if (!trigger) return null;
+
+  return (
+    <group ref={groupRef}>
+      {meteors.map(meteor => (
+        <group key={meteor.id} position={meteor.position}>
+          <mesh>
+            <sphereGeometry args={[meteor.size, 8, 8]} />
+            <meshBasicMaterial
+              color="#ffcc88"
+              transparent
+              opacity={meteor.life}
+            />
+          </mesh>
+          <mesh>
+            <sphereGeometry args={[meteor.size * 2, 8, 8]} />
+            <meshBasicMaterial
+              color="#ff8844"
+              transparent
+              opacity={meteor.life * 0.5}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+// Camera controller
+function CameraController({ impacted }: { impacted: boolean }) {
+  const { camera } = useThree();
+  const impactTime = useRef(0);
+
+  useEffect(() => {
+    camera.position.set(0, 0, 30);
+    camera.lookAt(0, 0, 0);
+  }, [camera]);
+
+  useFrame((state) => {
+    if (impacted && impactTime.current === 0) {
+      impactTime.current = state.clock.getElapsedTime();
+    }
+
+    if (impactTime.current > 0) {
+      const elapsed = state.clock.getElapsedTime() - impactTime.current;
+
+      // Camera shake during impact
+      if (elapsed < 0.5) {
+        const intensity = (0.5 - elapsed) * 2;
+        camera.position.x = Math.sin(elapsed * 50) * intensity * 0.5;
+        camera.position.y = Math.cos(elapsed * 30) * intensity * 0.3;
+      } else {
+        camera.position.x = 0;
+        camera.position.y = 0;
+      }
+    }
+  });
+
+  return null;
+}
+
+// Main scene component
+function Scene({ onImpact }: { onImpact: () => void }) {
+  const [impacted, setImpacted] = useState(false);
+
+  const handleImpact = () => {
+    setImpacted(true);
+    onImpact();
+  };
+
+  return (
+    <>
+      <CameraController impacted={impacted} />
+      <Starfield />
+      <Meteor onImpact={handleImpact} />
+      <ExplosionParticles trigger={impacted} />
+      <ShatteredGlass trigger={impacted} />
+      <VoidBeams trigger={impacted} />
+      <BackgroundMeteors trigger={impacted} />
+
+      {/* Crater glow */}
+      {impacted && (
+        <mesh position={[0, -15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[8, 32]} />
+          <meshBasicMaterial
+            color="#6633aa"
+            transparent
+            opacity={0.3}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      )}
+
+      {/* Post-processing effects */}
+      <EffectComposer>
+        <Bloom
+          intensity={1.5}
+          luminanceThreshold={0.2}
+          luminanceSmoothing={0.9}
+          mipmapBlur
+        />
+        <ChromaticAberration
+          offset={[0.002, 0.002]}
+          blendFunction={BlendFunction.NORMAL}
+        />
+        <Noise
+          opacity={0.15}
+          blendFunction={BlendFunction.OVERLAY}
+        />
+      </EffectComposer>
+    </>
+  );
+}
+
+// Main IntroScreen component
 export function IntroScreen({ onBegin }: { onBegin: () => void }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showTitle, setShowTitle] = useState(false);
   const [showButton, setShowButton] = useState(false);
   const [buttonHover, setButtonHover] = useState(false);
-  const animationRef = useRef<number | undefined>(undefined);
-  const starsRef = useRef<Star[]>([]);
-  const cracksRef = useRef<VoidCrack[]>([]);
-  const meteorRef = useRef<{ x: number; y: number; active: boolean; pulledStars: Star[] }>({
-    x: 0,
-    y: 0,
-    active: false,
-    pulledStars: [],
-  });
-  const phaseRef = useRef<'starfield' | 'meteor' | 'impact' | 'crater' | 'complete'>('starfield');
-  const timeRef = useRef(0);
-  const impactTimeRef = useRef(0);
+  const [titleGlitch, setTitleGlitch] = useState({ active: false, intensity: 0 });
+  const nextGlitchRef = useRef(0);
+
+  const handleImpact = () => {
+    setTimeout(() => setShowTitle(true), 1500);
+    setTimeout(() => setShowButton(true), 3000);
+  };
 
   useEffect(() => {
-    console.log('IntroScreen mounted');
-    const canvas = canvasRef.current;
-    if (!canvas) {
-      console.error('Canvas ref is null');
-      return;
-    }
+    if (!showTitle) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      console.error('Could not get 2d context');
-      return;
-    }
+    const interval = setInterval(() => {
+      setTitleGlitch({ active: true, intensity: Math.random() });
+      setTimeout(() => {
+        setTitleGlitch({ active: false, intensity: 0 });
+      }, 50 + Math.random() * 100);
+    }, 2000 + Math.random() * 2000);
 
-    console.log('Canvas context acquired');
-
-    // Set canvas size
-    const resize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      console.log(`Canvas resized to ${canvas.width}x${canvas.height}`);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    // Initialize stars
-    const initStars = () => {
-      const stars: Star[] = [];
-      for (let i = 0; i < 200; i++) {
-        stars.push({
-          x: Math.random() * canvas.width,
-          y: Math.random() * canvas.height,
-          size: Math.random() * 2 + 0.5,
-          brightness: Math.random() * 0.5 + 0.5,
-          twinkleSpeed: Math.random() * 0.02 + 0.01,
-          twinklePhase: Math.random() * Math.PI * 2,
-        });
-      }
-      starsRef.current = stars;
-    };
-    initStars();
-
-    // Start meteor after 2 seconds
-    setTimeout(() => {
-      if (phaseRef.current === 'starfield') {
-        phaseRef.current = 'meteor';
-        meteorRef.current = {
-          x: canvas.width / 2,
-          y: -50,
-          active: true,
-          pulledStars: [],
-        };
-      }
-    }, 2000);
-
-    // Animation loop
-    const animate = () => {
-      if (!ctx || !canvas) return;
-
-      timeRef.current += 0.016;
-      ctx.fillStyle = '#0a0a14';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Draw and update stars
-      starsRef.current.forEach((star, index) => {
-        // Twinkling effect
-        star.twinklePhase += star.twinkleSpeed;
-        const twinkle = Math.sin(star.twinklePhase) * 0.3 + 0.7;
-        const alpha = star.brightness * twinkle;
-
-        // Check if pulled by meteor
-        if (phaseRef.current === 'meteor' && meteorRef.current.active) {
-          const dx = star.x - meteorRef.current.x;
-          const dy = star.y - meteorRef.current.y;
-          const distance = Math.sqrt(dx * dx + dy * dy);
-
-          if (distance < 150 && star.y < meteorRef.current.y && !star.pulledByMeteor) {
-            star.pulledByMeteor = true;
-            meteorRef.current.pulledStars.push(star);
-          }
-        }
-
-        // Update pulled stars
-        if (star.pulledByMeteor) {
-          const dx = meteorRef.current.x - star.x;
-          const dy = meteorRef.current.y - star.y;
-          star.x += dx * 0.05;
-          star.y += dy * 0.05 + 3;
-        }
-
-        // Sporadic falling (only during starfield phase)
-        if (phaseRef.current === 'starfield' && Math.random() < 0.001 && !star.falling) {
-          star.falling = true;
-          star.fallSpeed = Math.random() * 2 + 1;
-        }
-
-        if (star.falling && star.fallSpeed) {
-          star.y += star.fallSpeed;
-          star.fallSpeed += 0.1;
-          if (star.y > canvas.height + 10) {
-            star.y = -10;
-            star.x = Math.random() * canvas.width;
-            star.falling = false;
-            star.fallSpeed = undefined;
-          }
-        }
-
-        // Check if star is near crack and pull it in
-        if (phaseRef.current === 'crater') {
-          for (const crack of cracksRef.current) {
-            const crackEndX = canvas.width / 2 + Math.cos(crack.angle) * crack.length;
-            const crackEndY = canvas.height + Math.sin(crack.angle) * crack.length;
-            const distToCrack = Math.sqrt(
-              Math.pow(star.x - crackEndX, 2) + Math.pow(star.y - crackEndY, 2)
-            );
-
-            if (distToCrack < 40) {
-              star.x += (canvas.width / 2 - star.x) * 0.02;
-              star.y += (canvas.height - star.y) * 0.02;
-              star.size *= 0.98;
-              if (star.size < 0.1) {
-                // Reset star far away
-                star.x = Math.random() * canvas.width;
-                star.y = Math.random() * canvas.height * 0.5;
-                star.size = Math.random() * 2 + 0.5;
-              }
-            }
-          }
-        }
-
-        // Draw star
-        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-        ctx.beginPath();
-        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Glow for larger stars
-        if (star.size > 1.5) {
-          ctx.fillStyle = `rgba(200, 220, 255, ${alpha * 0.3})`;
-          ctx.beginPath();
-          ctx.arc(star.x, star.y, star.size * 2, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      });
-
-      // Draw meteor
-      if (phaseRef.current === 'meteor' && meteorRef.current.active) {
-        const meteor = meteorRef.current;
-        meteor.y += 4;
-
-        // Meteor body
-        const gradient = ctx.createRadialGradient(meteor.x, meteor.y, 0, meteor.x, meteor.y, 25);
-        gradient.addColorStop(0, 'rgba(255, 240, 200, 1)');
-        gradient.addColorStop(0.4, 'rgba(255, 180, 100, 0.8)');
-        gradient.addColorStop(1, 'rgba(255, 100, 50, 0)');
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(meteor.x, meteor.y, 25, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Meteor trail
-        for (let i = 0; i < 5; i++) {
-          const trailY = meteor.y - (i * 20);
-          const trailAlpha = (5 - i) / 5 * 0.6;
-          ctx.fillStyle = `rgba(255, 150, 80, ${trailAlpha})`;
-          ctx.beginPath();
-          ctx.arc(meteor.x, trailY, 15 - i * 2, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Impact
-        if (meteor.y >= canvas.height - 50) {
-          phaseRef.current = 'impact';
-          meteorRef.current.active = false;
-          impactTimeRef.current = timeRef.current;
-
-          // Create cracks
-          const crackCount = 12;
-          for (let i = 0; i < crackCount; i++) {
-            cracksRef.current.push({
-              x: canvas.width / 2,
-              y: canvas.height,
-              angle: -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.8,
-              length: 0,
-              growth: Math.random() * 3 + 2,
-            });
-          }
-
-          // Show title after impact
-          setTimeout(() => setShowTitle(true), 1000);
-          setTimeout(() => setShowButton(true), 2000);
-        }
-      }
-
-      // Impact flash and shockwave
-      if (phaseRef.current === 'impact') {
-        const timeSinceImpact = timeRef.current - impactTimeRef.current;
-
-        if (timeSinceImpact < 0.5) {
-          // Flash
-          const flashAlpha = Math.max(0, 0.8 - timeSinceImpact * 2);
-          ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-
-        // Shockwave
-        if (timeSinceImpact < 1) {
-          const shockwaveRadius = timeSinceImpact * 500;
-          const shockwaveAlpha = Math.max(0, 0.6 - timeSinceImpact);
-
-          // Guard against a negative inner radius during the very first
-          // frames of the shockwave animation (r0 must be >= 0).
-          const innerRadius = Math.max(0, shockwaveRadius - 20);
-
-          const shockGradient = ctx.createRadialGradient(
-            canvas.width / 2,
-            canvas.height,
-            innerRadius,
-            canvas.width / 2,
-            canvas.height,
-            shockwaveRadius + 20
-          );
-          shockGradient.addColorStop(0, 'rgba(255, 200, 100, 0)');
-          shockGradient.addColorStop(0.5, `rgba(255, 150, 80, ${shockwaveAlpha})`);
-          shockGradient.addColorStop(1, 'rgba(255, 100, 50, 0)');
-
-          ctx.fillStyle = shockGradient;
-          ctx.beginPath();
-          ctx.arc(canvas.width / 2, canvas.height, shockwaveRadius, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        if (timeSinceImpact > 1) {
-          phaseRef.current = 'crater';
-        }
-      }
-
-      // Draw void cracks
-      if (phaseRef.current === 'crater' || phaseRef.current === 'complete') {
-        ctx.strokeStyle = 'rgba(100, 50, 150, 0.8)';
-        ctx.lineWidth = 2;
-
-        cracksRef.current.forEach(crack => {
-          if (crack.length < 300) {
-            crack.length += crack.growth;
-          }
-
-          ctx.beginPath();
-          ctx.moveTo(crack.x, crack.y);
-          const endX = crack.x + Math.cos(crack.angle) * crack.length;
-          const endY = crack.y + Math.sin(crack.angle) * crack.length;
-          ctx.lineTo(endX, endY);
-          ctx.stroke();
-
-          // Void glow
-          const crackGradient = ctx.createLinearGradient(crack.x, crack.y, endX, endY);
-          crackGradient.addColorStop(0, 'rgba(80, 40, 120, 0.4)');
-          crackGradient.addColorStop(1, 'rgba(120, 60, 180, 0)');
-          ctx.strokeStyle = crackGradient;
-          ctx.lineWidth = 4;
-          ctx.stroke();
-
-          ctx.strokeStyle = 'rgba(100, 50, 150, 0.8)';
-          ctx.lineWidth = 2;
-        });
-
-        // Void crater center glow
-        const craterGradient = ctx.createRadialGradient(
-          canvas.width / 2,
-          canvas.height,
-          0,
-          canvas.width / 2,
-          canvas.height,
-          150
-        );
-        craterGradient.addColorStop(0, 'rgba(100, 50, 150, 0.3)');
-        craterGradient.addColorStop(1, 'rgba(80, 40, 120, 0)');
-        ctx.fillStyle = craterGradient;
-        ctx.fillRect(0, canvas.height - 200, canvas.width, 200);
-      }
-
-      // Draw ghostly trails on hover
-      if (buttonHover && showButton) {
-        // Six stars representing the original expedition
-        for (let i = 0; i < 6; i++) {
-          const offsetX = (i - 2.5) * 80;
-          const startY = canvas.height * 0.3 + Math.sin(timeRef.current * 2 + i) * 20;
-
-          ctx.strokeStyle = `rgba(150, 200, 255, ${0.3 + Math.sin(timeRef.current * 3 + i) * 0.2})`;
-          ctx.lineWidth = 2;
-          ctx.setLineDash([5, 10]);
-
-          ctx.beginPath();
-          ctx.moveTo(canvas.width / 2 + offsetX, startY);
-          ctx.lineTo(canvas.width / 2, canvas.height - 100);
-          ctx.stroke();
-
-          ctx.setLineDash([]);
-
-          // Ghostly star at trail start
-          ctx.fillStyle = `rgba(150, 200, 255, ${0.4 + Math.sin(timeRef.current * 3 + i) * 0.2})`;
-          ctx.beginPath();
-          ctx.arc(canvas.width / 2 + offsetX, startY, 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-
-      animationRef.current = requestAnimationFrame(animate);
-    };
-
-    animate();
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, [buttonHover]);
+    return () => clearInterval(interval);
+  }, [showTitle]);
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-[#0a0a14]">
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0"
-      />
+    <div className="fixed inset-0 w-full h-full overflow-hidden bg-black">
+      <Canvas
+        camera={{ position: [0, 0, 30], fov: 75 }}
+        gl={{ antialias: true, alpha: false }}
+      >
+        <Scene onImpact={handleImpact} />
+      </Canvas>
 
       {showTitle && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
+          style={{
+            top: '35%',
+            transform: titleGlitch.active
+              ? `translate(${(Math.random() - 0.5) * 20 * titleGlitch.intensity}px, ${(Math.random() - 0.5) * 10 * titleGlitch.intensity}px)`
+              : 'translate(0, 0)',
+            transition: titleGlitch.active ? 'none' : 'transform 0.1s ease-out',
+          }}
+        >
           <h1
-            className="text-7xl font-bold text-white mb-8 animate-fade-in tracking-wider"
+            className="text-8xl font-bold text-white tracking-widest select-none"
             style={{
-              textShadow: '0 0 20px rgba(150, 100, 200, 0.8), 0 0 40px rgba(100, 50, 150, 0.4)',
-              animation: 'fadeIn 1.5s ease-out',
+              fontFamily: "'Rubik Burned', cursive",
+              textShadow: titleGlitch.active
+                ? `
+                  ${(Math.random() - 0.5) * 10}px ${(Math.random() - 0.5) * 10}px 20px rgba(255, 0, 100, ${titleGlitch.intensity}),
+                  ${(Math.random() - 0.5) * 10}px ${(Math.random() - 0.5) * 10}px 20px rgba(0, 255, 255, ${titleGlitch.intensity}),
+                  0 0 40px rgba(150, 100, 200, 0.9),
+                  0 0 80px rgba(100, 50, 150, 0.6),
+                  0 0 120px rgba(80, 40, 120, 0.4)
+                `
+                : `
+                  0 0 40px rgba(150, 100, 200, 0.9),
+                  0 0 80px rgba(100, 50, 150, 0.6),
+                  0 0 120px rgba(80, 40, 120, 0.4)
+                `,
+              filter: titleGlitch.active
+                ? `hue-rotate(${Math.random() * 360}deg) saturate(${1 + titleGlitch.intensity * 2})`
+                : 'none',
+              opacity: titleGlitch.active && Math.random() < 0.3 ? 0.3 : 1,
+              animation: 'titleFloat 3s ease-in-out infinite',
             }}
           >
             THE FINAL DESCENT
@@ -385,35 +618,117 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
 
       {showButton && (
         <div
-          className="absolute bottom-32 left-1/2 -translate-x-1/2 pointer-events-auto"
-          style={{ animation: 'fadeIn 1s ease-out' }}
+          className="absolute left-1/2 pointer-events-auto select-none"
+          style={{
+            bottom: '20%',
+            transform: 'translateX(-50%)',
+            animation: 'buttonGlitchIn 1.2s ease-out, buttonFloat 4s ease-in-out infinite 1.2s',
+          }}
         >
-          <button
+          <div
             onClick={onBegin}
             onMouseEnter={() => setButtonHover(true)}
             onMouseLeave={() => setButtonHover(false)}
-            className="px-8 py-4 bg-purple-900/50 hover:bg-purple-800/70 text-white text-xl rounded-lg border-2 border-purple-500/50 hover:border-purple-400 transition-all duration-300"
+            className="cursor-pointer transition-all duration-300"
             style={{
-              textShadow: '0 0 10px rgba(150, 100, 200, 0.8)',
-              boxShadow: buttonHover
-                ? '0 0 30px rgba(150, 100, 200, 0.6)'
-                : '0 0 15px rgba(100, 50, 150, 0.4)',
+              fontFamily: "'Rubik Marker Hatch', cursive",
+              fontSize: '1.5rem',
+              color: 'white',
+              textShadow: buttonHover
+                ? `
+                  0 0 20px rgba(200, 150, 255, 1),
+                  0 0 40px rgba(150, 100, 220, 0.8),
+                  0 0 60px rgba(120, 80, 180, 0.6),
+                  0 0 80px rgba(100, 60, 150, 0.4)
+                `
+                : `
+                  0 0 15px rgba(150, 100, 200, 0.8),
+                  0 0 30px rgba(120, 80, 180, 0.6),
+                  0 0 45px rgba(100, 60, 150, 0.4)
+                `,
+              filter: buttonHover ? 'brightness(1.3)' : 'brightness(1)',
+              letterSpacing: '0.15em',
             }}
           >
-            Begin the Descent
-          </button>
+            BEGIN THE DESCENT
+          </div>
         </div>
       )}
 
       <style>{`
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-            transform: translateY(-20px);
+        @keyframes titleFloat {
+          0%, 100% {
+            transform: translateY(0px);
           }
-          to {
+          50% {
+            transform: translateY(-10px);
+          }
+        }
+
+        @keyframes buttonFloat {
+          0%, 100% {
+            transform: translateX(-50%) translateY(0px);
+          }
+          50% {
+            transform: translateX(-50%) translateY(-8px);
+          }
+        }
+
+        @keyframes buttonGlitchIn {
+          0% {
+            opacity: 0;
+            transform: translateX(-50%) translateY(30px);
+            filter: blur(20px) hue-rotate(180deg);
+          }
+          10% {
+            opacity: 0.2;
+            transform: translateX(calc(-50% + 30px)) translateY(10px);
+            filter: blur(15px) hue-rotate(90deg);
+          }
+          15% {
+            opacity: 0;
+            transform: translateX(calc(-50% - 25px)) translateY(5px);
+          }
+          25% {
+            opacity: 0.5;
+            transform: translateX(calc(-50% + 15px)) translateY(-5px);
+            filter: blur(10px) hue-rotate(270deg);
+          }
+          35% {
+            opacity: 0.1;
+            transform: translateX(calc(-50% - 20px)) translateY(8px);
+          }
+          45% {
+            opacity: 0.7;
+            transform: translateX(calc(-50% + 10px)) translateY(-3px);
+            filter: blur(8px) hue-rotate(45deg);
+          }
+          55% {
+            opacity: 0.3;
+            transform: translateX(calc(-50% - 12px)) translateY(4px);
+          }
+          65% {
+            opacity: 0.8;
+            transform: translateX(calc(-50% + 8px)) translateY(-2px);
+            filter: blur(5px) hue-rotate(180deg);
+          }
+          75% {
+            opacity: 0.4;
+            transform: translateX(calc(-50% - 6px)) translateY(2px);
+          }
+          85% {
+            opacity: 0.9;
+            transform: translateX(calc(-50% + 3px)) translateY(-1px);
+            filter: blur(2px) hue-rotate(90deg);
+          }
+          95% {
+            opacity: 0.6;
+            transform: translateX(calc(-50% - 2px)) translateY(1px);
+          }
+          100% {
             opacity: 1;
-            transform: translateY(0);
+            transform: translateX(-50%) translateY(0px);
+            filter: blur(0px) hue-rotate(0deg);
           }
         }
       `}</style>
