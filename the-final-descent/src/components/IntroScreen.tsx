@@ -1,624 +1,858 @@
 /**
- * IntroScreen - AAA-Quality Three.js Cinematic Experience
+ * IntroScreen - Premium Cinematic Three.js Experience
+ * Production-grade meteor impact with advanced VFX
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { EffectComposer, Bloom, ChromaticAberration, Noise } from '@react-three/postprocessing';
-import { BlendFunction } from 'postprocessing';
 import * as THREE from 'three';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass';
+import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader';
 
-// Starfield with depth
-function Starfield() {
-  const starsRef = useRef<THREE.Points>(null);
-  const [geometry] = useState(() => {
-    const geo = new THREE.BufferGeometry();
-    const positions = [];
-    const colors = [];
-    const sizes = [];
+// ============================================================================
+// CUSTOM SHADERS
+// ============================================================================
 
-    for (let i = 0; i < 2000; i++) {
-      // Distribute stars in 3D space for depth
-      positions.push(
-        (Math.random() - 0.5) * 100,
-        (Math.random() - 0.5) * 100,
-        (Math.random() - 0.5) * 50 - 10 // Depth
-      );
+const MeteorVertexShader = `
+  uniform float time;
+  uniform float heatIntensity;
+  varying vec3 vNormal;
+  varying vec3 vPosition;
+  varying float vDisplacement;
 
-      const color = new THREE.Color();
-      color.setHSL(0.6 + Math.random() * 0.1, 0.2, 0.8 + Math.random() * 0.2);
-      colors.push(color.r, color.g, color.b);
+  // Simplex noise function
+  vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+  vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+  vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+  vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
 
-      sizes.push(Math.random() * 2 + 0.5);
+  float snoise(vec3 v) {
+    const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+    vec3 i  = floor(v + dot(v, C.yyy));
+    vec3 x0 = v - i + dot(i, C.xxx);
+
+    vec3 g = step(x0.yzx, x0.xyz);
+    vec3 l = 1.0 - g;
+    vec3 i1 = min(g.xyz, l.zxy);
+    vec3 i2 = max(g.xyz, l.zxy);
+
+    vec3 x1 = x0 - i1 + C.xxx;
+    vec3 x2 = x0 - i2 + C.yyy;
+    vec3 x3 = x0 - D.yyy;
+
+    i = mod289(i);
+    vec4 p = permute(permute(permute(
+              i.z + vec4(0.0, i1.z, i2.z, 1.0))
+            + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+            + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+
+    float n_ = 0.142857142857;
+    vec3 ns = n_ * D.wyz - D.xzx;
+
+    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+    vec4 x_ = floor(j * ns.z);
+    vec4 y_ = floor(j - 7.0 * x_);
+
+    vec4 x = x_ *ns.x + ns.yyyy;
+    vec4 y = y_ *ns.x + ns.yyyy;
+    vec4 h = 1.0 - abs(x) - abs(y);
+
+    vec4 b0 = vec4(x.xy, y.xy);
+    vec4 b1 = vec4(x.zw, y.zw);
+
+    vec4 s0 = floor(b0)*2.0 + 1.0;
+    vec4 s1 = floor(b1)*2.0 + 1.0;
+    vec4 sh = -step(h, vec4(0.0));
+
+    vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+    vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+
+    vec3 p0 = vec3(a0.xy, h.x);
+    vec3 p1 = vec3(a0.zw, h.y);
+    vec3 p2 = vec3(a1.xy, h.z);
+    vec3 p3 = vec3(a1.zw, h.w);
+
+    vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+    p0 *= norm.x;
+    p1 *= norm.y;
+    p2 *= norm.z;
+    p3 *= norm.w;
+
+    vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+    m = m * m;
+    return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+  }
+
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    vPosition = position;
+
+    // Add noise-based displacement for rocky surface
+    float noise = snoise(position * 0.8 + vec3(time * 0.1));
+    float displacement = noise * 0.15;
+    vDisplacement = displacement;
+
+    vec3 newPosition = position + normal * displacement;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+  }
+`;
+
+const MeteorFragmentShader = `
+  uniform float time;
+  uniform float heatIntensity;
+  uniform vec3 meteorVelocity;
+  varying vec3 vNormal;
+  varying vec3 vPosition;
+  varying float vDisplacement;
+
+  void main() {
+    // Fresnel for leading edge glow
+    vec3 viewDir = normalize(cameraPosition - vPosition);
+    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.0);
+
+    // Heat based on velocity direction (front is hottest)
+    float heatFalloff = dot(normalize(vPosition), normalize(meteorVelocity));
+    heatFalloff = smoothstep(-0.5, 1.0, heatFalloff);
+
+    // Base rock color with variation
+    vec3 rockColor = vec3(0.25, 0.22, 0.20) * (1.0 + vDisplacement * 0.5);
+
+    // Emissive heat gradient: white hot → yellow → orange → red
+    vec3 heatColor = mix(
+      vec3(0.4, 0.1, 0.05),  // Dim red
+      vec3(1.0, 0.95, 0.85), // White hot
+      heatFalloff * heatIntensity
+    );
+
+    if (heatFalloff * heatIntensity > 0.6) {
+      heatColor = mix(heatColor, vec3(1.0, 0.7, 0.3), (heatFalloff * heatIntensity - 0.6) * 2.5);
     }
 
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+    // Combine rock and heat
+    vec3 finalColor = mix(rockColor, heatColor, fresnel * 0.6 + heatFalloff * heatIntensity * 0.8);
 
-    return geo;
-  });
+    // Add bright fresnel rim
+    finalColor += vec3(1.0, 0.8, 0.5) * fresnel * heatIntensity * 2.0;
 
-  useFrame((state) => {
-    if (!starsRef.current) return;
-    const time = state.clock.getElapsedTime();
+    gl_FragColor = vec4(finalColor, 1.0);
+  }
+`;
 
-    // Animate star brightness (twinkling)
-    const positions = starsRef.current.geometry.attributes.position.array as Float32Array;
-    const colors = starsRef.current.geometry.attributes.color.array as Float32Array;
+const TrailParticleVertexShader = `
+  attribute float size;
+  attribute vec3 color;
+  attribute float alpha;
+  attribute float rotation;
 
-    for (let i = 0; i < positions.length / 3; i++) {
-      const twinkle = Math.sin(time * 2 + i * 0.1) * 0.3 + 0.7;
-      colors[i * 3] = (0.8 + Math.random() * 0.2) * twinkle;
-      colors[i * 3 + 1] = (0.8 + Math.random() * 0.2) * twinkle;
-      colors[i * 3 + 2] = (0.9 + Math.random() * 0.1) * twinkle;
+  varying vec3 vColor;
+  varying float vAlpha;
+  varying float vRotation;
+
+  void main() {
+    vColor = color;
+    vAlpha = alpha;
+    vRotation = rotation;
+
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = size * (300.0 / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const TrailParticleFragmentShader = `
+  varying vec3 vColor;
+  varying float vAlpha;
+  varying float vRotation;
+
+  void main() {
+    vec2 center = gl_PointCoord - 0.5;
+
+    // Rotate
+    float s = sin(vRotation);
+    float c = cos(vRotation);
+    vec2 rotated = vec2(
+      c * center.x - s * center.y,
+      s * center.x + c * center.y
+    );
+
+    // Soft circular falloff with noise
+    float dist = length(rotated);
+    float alpha = smoothstep(0.5, 0.1, dist) * vAlpha;
+
+    if (alpha < 0.01) discard;
+
+    gl_FragColor = vec4(vColor, alpha);
+  }
+`;
+
+const RefractionShardVertexShader = `
+  varying vec3 vNormal;
+  varying vec3 vPosition;
+  varying vec2 vUv;
+  varying vec4 vWorldPosition;
+
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    vPosition = position;
+    vUv = uv;
+    vWorldPosition = modelMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const RefractionShardFragmentShader = `
+  uniform sampler2D tDiffuse;
+  uniform vec2 resolution;
+  uniform float time;
+  uniform float refractionStrength;
+
+  varying vec3 vNormal;
+  varying vec3 vPosition;
+  varying vec2 vUv;
+  varying vec4 vWorldPosition;
+
+  void main() {
+    vec2 screenUV = gl_FragCoord.xy / resolution;
+
+    // Calculate refraction offset based on normal
+    vec3 viewDir = normalize(cameraPosition - vWorldPosition.xyz);
+    vec3 refractDir = refract(viewDir, vNormal, 0.9);
+    vec2 refractOffset = refractDir.xy * refractionStrength * 0.05;
+
+    // Sample background with chromatic dispersion
+    vec2 uv = screenUV + refractOffset;
+    float r = texture2D(tDiffuse, uv + refractOffset * 0.01).r;
+    float g = texture2D(tDiffuse, uv).g;
+    float b = texture2D(tDiffuse, uv - refractOffset * 0.01).b;
+
+    vec3 refractedColor = vec3(r, g, b);
+
+    // Edge highlight (Fresnel)
+    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 3.0);
+    vec3 edgeGlow = vec3(0.6, 0.4, 0.9) * fresnel * 0.5;
+
+    // Slight purple tint
+    vec3 finalColor = mix(refractedColor, refractedColor * vec3(0.9, 0.85, 1.1), 0.15);
+    finalColor += edgeGlow;
+
+    gl_FragColor = vec4(finalColor, 0.85 + fresnel * 0.15);
+  }
+`;
+
+// Chromatic Aberration Shader
+const ChromaticAberrationShader = {
+  uniforms: {
+    'tDiffuse': { value: null },
+    'amount': { value: 0.0 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float amount;
+    varying vec2 vUv;
+
+    void main() {
+      vec2 offset = vec2(amount, 0.0);
+      float r = texture2D(tDiffuse, vUv + offset).r;
+      float g = texture2D(tDiffuse, vUv).g;
+      float b = texture2D(tDiffuse, vUv - offset).b;
+      gl_FragColor = vec4(r, g, b, 1.0);
+    }
+  `
+};
+
+// Film Grain Shader
+const FilmGrainShader = {
+  uniforms: {
+    'tDiffuse': { value: null },
+    'time': { value: 0.0 },
+    'amount': { value: 0.15 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float time;
+    uniform float amount;
+    varying vec2 vUv;
+
+    float random(vec2 p) {
+      return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
     }
 
-    starsRef.current.geometry.attributes.color.needsUpdate = true;
-  });
-
-  return (
-    <points ref={starsRef} geometry={geometry}>
-      <pointsMaterial
-        size={0.4}
-        vertexColors
-        transparent
-        opacity={1}
-        sizeAttenuation
-        blending={THREE.AdditiveBlending}
-      />
-    </points>
-  );
-}
-
-// Main meteor
-function Meteor({ onImpact }: { onImpact: () => void }) {
-  const meteorRef = useRef<THREE.Group>(null);
-  const trailRef = useRef<THREE.Points>(null);
-  const [active, setActive] = useState(false);
-  const startTime = useRef(0);
-
-  useEffect(() => {
-    console.log('Meteor component mounted, will activate in 2 seconds');
-    const timer = setTimeout(() => {
-      console.log('Meteor activated!');
-      setActive(true);
-      startTime.current = performance.now() / 1000;
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  useFrame((state) => {
-    if (!active || !meteorRef.current) return;
-
-    const elapsed = (performance.now() / 1000) - startTime.current;
-    const speed = 8; // Much faster and more visible
-
-    meteorRef.current.position.y = 30 - elapsed * speed;
-
-    // Impact detection
-    if (meteorRef.current.position.y < -15) {
-      console.log('METEOR IMPACT!');
-      setActive(false);
-      onImpact();
+    void main() {
+      vec4 color = texture2D(tDiffuse, vUv);
+      float noise = random(vUv + time) * amount;
+      gl_FragColor = vec4(color.rgb + noise - amount * 0.5, color.a);
     }
+  `
+};
 
-    // Update trail
-    if (trailRef.current) {
-      const positions = trailRef.current.geometry.attributes.position.array as Float32Array;
-      for (let i = positions.length - 3; i > 2; i -= 3) {
-        positions[i] = positions[i - 3];
-        positions[i + 1] = positions[i - 2];
-        positions[i + 2] = positions[i - 1];
+// ============================================================================
+// PARTICLE SYSTEMS
+// ============================================================================
+
+class TrailParticleSystem {
+  geometry: THREE.BufferGeometry;
+  material: THREE.ShaderMaterial;
+  points: THREE.Points;
+  maxParticles: number;
+  particles: Array<{
+    position: THREE.Vector3;
+    velocity: THREE.Vector3;
+    life: number;
+    maxLife: number;
+    size: number;
+    type: 'plasma' | 'ember' | 'smoke';
+  }>;
+
+  constructor(maxParticles = 2000) {
+    this.maxParticles = maxParticles;
+    this.particles = [];
+
+    // Create geometry
+    this.geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(maxParticles * 3);
+    const colors = new Float32Array(maxParticles * 3);
+    const sizes = new Float32Array(maxParticles);
+    const alphas = new Float32Array(maxParticles);
+    const rotations = new Float32Array(maxParticles);
+
+    this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    this.geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    this.geometry.setAttribute('alpha', new THREE.BufferAttribute(alphas, 1));
+    this.geometry.setAttribute('rotation', new THREE.BufferAttribute(rotations, 1));
+
+    // Create material
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {},
+      vertexShader: TrailParticleVertexShader,
+      fragmentShader: TrailParticleFragmentShader,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    this.points = new THREE.Points(this.geometry, this.material);
+  }
+
+  emit(position: THREE.Vector3, velocity: THREE.Vector3, count: number, type: 'plasma' | 'ember' | 'smoke') {
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+
+      const spreadAngle = type === 'plasma' ? 0.3 : type === 'ember' ? 0.8 : 1.2;
+      const vel = velocity.clone().multiplyScalar(0.3 + Math.random() * 0.7);
+      vel.x += (Math.random() - 0.5) * spreadAngle;
+      vel.y += (Math.random() - 0.5) * spreadAngle;
+      vel.z += (Math.random() - 0.5) * spreadAngle;
+
+      this.particles.push({
+        position: position.clone(),
+        velocity: vel,
+        life: 1.0,
+        maxLife: type === 'plasma' ? 0.4 : type === 'ember' ? 0.8 : 1.5,
+        size: type === 'plasma' ? 15 + Math.random() * 10 : type === 'ember' ? 8 + Math.random() * 6 : 25 + Math.random() * 15,
+        type
+      });
+    }
+  }
+
+  update(deltaTime: number) {
+    const positions = this.geometry.attributes.position.array as Float32Array;
+    const colors = this.geometry.attributes.color.array as Float32Array;
+    const sizes = this.geometry.attributes.size.array as Float32Array;
+    const alphas = this.geometry.attributes.alpha.array as Float32Array;
+    const rotations = this.geometry.attributes.rotation.array as Float32Array;
+
+    this.particles = this.particles.filter((p, i) => {
+      p.life -= deltaTime / p.maxLife;
+      if (p.life <= 0) return false;
+
+      // Update physics
+      p.position.add(p.velocity.clone().multiplyScalar(deltaTime));
+      p.velocity.multiplyScalar(0.98); // Friction
+      if (p.type === 'smoke') {
+        p.velocity.y += deltaTime * 2; // Smoke rises
       }
-      positions[0] = meteorRef.current.position.x;
-      positions[1] = meteorRef.current.position.y;
-      positions[2] = meteorRef.current.position.z;
-      trailRef.current.geometry.attributes.position.needsUpdate = true;
-    }
-  });
 
-  if (!active) return null;
+      // Update attributes
+      positions[i * 3] = p.position.x;
+      positions[i * 3 + 1] = p.position.y;
+      positions[i * 3 + 2] = p.position.z;
 
-  // Trail geometry
-  const trailPositions = new Float32Array(300);
-  const trailGeometry = new THREE.BufferGeometry();
-  trailGeometry.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
-
-  return (
-    <group ref={meteorRef} position={[0, 30, 0]}>
-      {/* Meteor core - MUCH LARGER */}
-      <mesh>
-        <sphereGeometry args={[2, 32, 32]} />
-        <meshBasicMaterial color="#ffffff" />
-      </mesh>
-
-      {/* Meteor glow */}
-      <mesh>
-        <sphereGeometry args={[4, 32, 32]} />
-        <meshBasicMaterial
-          color="#ffaa44"
-          transparent
-          opacity={0.8}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-
-      {/* Outer glow */}
-      <mesh>
-        <sphereGeometry args={[6, 32, 32]} />
-        <meshBasicMaterial
-          color="#ff6622"
-          transparent
-          opacity={0.5}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-
-      {/* Trail */}
-      <points ref={trailRef} geometry={trailGeometry}>
-        <pointsMaterial
-          size={0.3}
-          color="#ffaa44"
-          transparent
-          opacity={0.8}
-          blending={THREE.AdditiveBlending}
-        />
-      </points>
-    </group>
-  );
-}
-
-// Particle explosion system
-function ExplosionParticles({ trigger }: { trigger: boolean }) {
-  const particlesRef = useRef<THREE.Points>(null);
-  const velocities = useRef<Float32Array | null>(null);
-
-  const [geometry] = useState(() => {
-    const geo = new THREE.BufferGeometry();
-    const positions = [];
-    const colors = [];
-    const sizes = [];
-
-    for (let i = 0; i < 2000; i++) {
-      positions.push(0, -15, 0);
-
-      // Mix of orange fire and purple void
-      if (Math.random() < 0.6) {
-        colors.push(1, 0.5 + Math.random() * 0.3, 0.1);
-      } else {
-        colors.push(0.6, 0.3, 0.8 + Math.random() * 0.2);
+      // Color based on type and life
+      let r, g, b;
+      if (p.type === 'plasma') {
+        const temp = p.life;
+        r = 1.0;
+        g = 0.8 * temp + 0.4 * (1 - temp);
+        b = 0.3 * temp;
+      } else if (p.type === 'ember') {
+        const temp = p.life * 0.7 + 0.3;
+        r = 1.0;
+        g = 0.3 + temp * 0.4;
+        b = 0.1 * temp;
+      } else { // smoke
+        const gray = 0.15 + (1 - p.life) * 0.1;
+        r = g = b = gray;
       }
 
-      sizes.push(Math.random() * 0.3 + 0.1);
-    }
+      colors[i * 3] = r;
+      colors[i * 3 + 1] = g;
+      colors[i * 3 + 2] = b;
 
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+      sizes[i] = p.size * (p.type === 'smoke' ? (1 + (1 - p.life) * 2) : 1);
+      alphas[i] = p.life * (p.type === 'plasma' ? 0.9 : p.type === 'ember' ? 0.8 : 0.6);
+      rotations[i] = p.life * Math.PI * 2;
 
-    // Create velocities
-    const vels = new Float32Array(positions.length);
-    for (let i = 0; i < positions.length; i += 3) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.random() * Math.PI;
-      const speed = Math.random() * 0.5 + 0.2;
+      return true;
+    });
 
-      vels[i] = Math.sin(phi) * Math.cos(theta) * speed;
-      vels[i + 1] = Math.abs(Math.cos(phi)) * speed * 0.5 + 0.3;
-      vels[i + 2] = Math.sin(phi) * Math.sin(theta) * speed;
-    }
-    velocities.current = vels;
+    this.geometry.setDrawRange(0, this.particles.length);
+    this.geometry.attributes.position.needsUpdate = true;
+    this.geometry.attributes.color.needsUpdate = true;
+    this.geometry.attributes.size.needsUpdate = true;
+    this.geometry.attributes.alpha.needsUpdate = true;
+    this.geometry.attributes.rotation.needsUpdate = true;
+  }
 
-    return geo;
-  });
-
-  useFrame(() => {
-    if (!trigger || !particlesRef.current || !velocities.current) return;
-
-    const positions = particlesRef.current.geometry.attributes.position.array as Float32Array;
-    const sizes = particlesRef.current.geometry.attributes.size.array as Float32Array;
-
-    for (let i = 0; i < positions.length; i += 3) {
-      positions[i] += velocities.current[i];
-      positions[i + 1] += velocities.current[i + 1];
-      positions[i + 2] += velocities.current[i + 2];
-
-      velocities.current[i + 1] -= 0.01; // Gravity
-      velocities.current[i] *= 0.99;
-      velocities.current[i + 2] *= 0.99;
-
-      sizes[i / 3] *= 0.99;
-    }
-
-    particlesRef.current.geometry.attributes.position.needsUpdate = true;
-    particlesRef.current.geometry.attributes.size.needsUpdate = true;
-  });
-
-  if (!trigger) return null;
-
-  return (
-    <points ref={particlesRef} geometry={geometry}>
-      <pointsMaterial
-        vertexColors
-        transparent
-        opacity={0.9}
-        sizeAttenuation
-        blending={THREE.AdditiveBlending}
-      />
-    </points>
-  );
+  getMesh() {
+    return this.points;
+  }
 }
 
-// Shattered glass fragments
-function ShatteredGlass({ trigger }: { trigger: boolean }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const [fragments] = useState(() => {
-    const frags = [];
-    for (let i = 0; i < 50; i++) {
-      const angle = (i / 50) * Math.PI - Math.PI / 2;
-      const distance = 3 + Math.random() * 2;
-      const shape = new THREE.Shape();
+// ============================================================================
+// SCENE MANAGER
+// ============================================================================
 
-      // Create irregular polygon
+class SceneManager {
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  renderer: THREE.WebGLRenderer;
+  composer: EffectComposer;
+  bloomPass: UnrealBloomPass;
+  chromaPass: ShaderPass;
+  grainPass: ShaderPass;
+
+  meteorMesh: THREE.Mesh | null = null;
+  meteorMaterial: THREE.ShaderMaterial | null = null;
+  trailSystem: TrailParticleSystem;
+  shardsMeshes: THREE.Mesh[] = [];
+
+  clock: THREE.Clock;
+  timeline: {
+    phase: 'intro' | 'meteor' | 'impact' | 'crater' | 'complete';
+    time: number;
+    meteorStartTime: number;
+    impactTime: number;
+  };
+
+  onImpact?: () => void;
+
+  constructor(canvas: HTMLCanvasElement) {
+    // Scene setup
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x000000);
+
+    // Camera
+    this.camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    this.camera.position.set(0, 0, 30);
+
+    // Renderer
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+    });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    // Postprocessing
+    this.composer = new EffectComposer(this.renderer);
+
+    const renderPass = new RenderPass(this.scene, this.camera);
+    this.composer.addPass(renderPass);
+
+    this.bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      1.5, // strength
+      0.4, // radius
+      0.85 // threshold
+    );
+    this.composer.addPass(this.bloomPass);
+
+    this.chromaPass = new ShaderPass(ChromaticAberrationShader);
+    this.chromaPass.uniforms['amount'].value = 0.0;
+    this.composer.addPass(this.chromaPass);
+
+    this.grainPass = new ShaderPass(FilmGrainShader);
+    this.grainPass.uniforms['amount'].value = 0.15;
+    this.composer.addPass(this.grainPass);
+
+    const fxaaPass = new ShaderPass(FXAAShader);
+    fxaaPass.uniforms['resolution'].value.set(
+      1 / window.innerWidth,
+      1 / window.innerHeight
+    );
+    this.composer.addPass(fxaaPass);
+
+    // Systems
+    this.trailSystem = new TrailParticleSystem(3000);
+    this.scene.add(this.trailSystem.getMesh());
+
+    this.clock = new THREE.Clock();
+    this.timeline = {
+      phase: 'intro',
+      time: 0,
+      meteorStartTime: 0,
+      impactTime: 0,
+    };
+
+    // Initialize
+    this.createStarfield();
+    this.createMeteor();
+
+    // Handle resize
+    window.addEventListener('resize', () => this.handleResize());
+  }
+
+  createStarfield() {
+    const starGeometry = new THREE.BufferGeometry();
+    const starCount = 3000;
+    const positions = new Float32Array(starCount * 3);
+    const colors = new Float32Array(starCount * 3);
+    const sizes = new Float32Array(starCount);
+
+    for (let i = 0; i < starCount; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 150;
+      positions[i * 3 + 1] = (Math.random() - 0.5) * 150;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 80 - 20;
+
+      const temp = 0.5 + Math.random() * 0.5;
+      colors[i * 3] = 0.8 + temp * 0.2;
+      colors[i * 3 + 1] = 0.8 + temp * 0.2;
+      colors[i * 3 + 2] = 0.9 + temp * 0.1;
+
+      sizes[i] = Math.random() * 2 + 0.5;
+    }
+
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    starGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    starGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+    const starMaterial = new THREE.PointsMaterial({
+      size: 0.5,
+      vertexColors: true,
+      transparent: true,
+      opacity: 1,
+      sizeAttenuation: true,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const stars = new THREE.Points(starGeometry, starMaterial);
+    this.scene.add(stars);
+  }
+
+  createMeteor() {
+    const geometry = new THREE.IcosahedronGeometry(2, 3);
+
+    this.meteorMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        heatIntensity: { value: 1.0 },
+        meteorVelocity: { value: new THREE.Vector3(0, -1, 0) },
+      },
+      vertexShader: MeteorVertexShader,
+      fragmentShader: MeteorFragmentShader,
+    });
+
+    this.meteorMesh = new THREE.Mesh(geometry, this.meteorMaterial);
+    this.meteorMesh.position.set(0, 50, 0);
+    this.meteorMesh.visible = false;
+    this.scene.add(this.meteorMesh);
+
+    // Add meteor glow
+    const glowGeometry = new THREE.IcosahedronGeometry(3.5, 2);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xff8844,
+      transparent: true,
+      opacity: 0.3,
+      blending: THREE.AdditiveBlending,
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    this.meteorMesh.add(glow);
+  }
+
+  startMeteor() {
+    console.log('Starting meteor sequence');
+    this.timeline.phase = 'meteor';
+    this.timeline.meteorStartTime = this.timeline.time;
+    if (this.meteorMesh) {
+      this.meteorMesh.visible = true;
+    }
+  }
+
+  createImpactEffects() {
+    console.log('Creating impact effects');
+    // Impact will be handled by particle systems
+  }
+
+  createShatteredGlass() {
+    console.log('Creating shattered glass effect');
+
+    // Create render target for refraction
+    const renderTarget = new THREE.WebGLRenderTarget(
+      window.innerWidth,
+      window.innerHeight
+    );
+
+    // Generate Voronoi-like distribution
+    const shardCount = 30;
+    const craterCenter = new THREE.Vector2(0, -15);
+    const points: THREE.Vector2[] = [];
+
+    for (let i = 0; i < shardCount; i++) {
+      const angle = (i / shardCount) * Math.PI * 2;
+      const distance = 3 + Math.random() * 4;
+      points.push(new THREE.Vector2(
+        craterCenter.x + Math.cos(angle) * distance,
+        craterCenter.y + Math.sin(angle) * distance
+      ));
+    }
+
+    // Create shards
+    points.forEach((point, i) => {
       const sides = 5 + Math.floor(Math.random() * 3);
-      const size = 0.3 + Math.random() * 0.2;
+      const shape = new THREE.Shape();
+      const size = 0.4 + Math.random() * 0.3;
 
       for (let j = 0; j < sides; j++) {
-        const a = (j / sides) * Math.PI * 2;
+        const angle = (j / sides) * Math.PI * 2 + Math.random() * 0.3;
         const r = size * (0.7 + Math.random() * 0.3);
-        const x = Math.cos(a) * r;
-        const y = Math.sin(a) * r;
+        const x = Math.cos(angle) * r;
+        const y = Math.sin(angle) * r;
 
         if (j === 0) shape.moveTo(x, y);
         else shape.lineTo(x, y);
       }
       shape.closePath();
 
-      frags.push({
-        shape,
-        position: [
-          Math.cos(angle) * distance,
-          -15 + Math.sin(angle) * distance * 0.5,
-          (Math.random() - 0.5) * 2
-        ] as [number, number, number],
-        rotation: [Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI] as [number, number, number],
-        rotationSpeed: [(Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.02] as [number, number, number],
+      const geometry = new THREE.ShapeGeometry(shape);
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          tDiffuse: { value: null },
+          resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+          time: { value: 0 },
+          refractionStrength: { value: 1.0 },
+        },
+        vertexShader: RefractionShardVertexShader,
+        fragmentShader: RefractionShardFragmentShader,
+        transparent: true,
+        side: THREE.DoubleSide,
       });
-    }
-    return frags;
-  });
 
-  useFrame(() => {
-    if (!trigger || !groupRef.current) return;
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(point.x, point.y, 0.1);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.rotation.z = Math.random() * Math.PI * 2;
+      mesh.visible = false;
 
-    groupRef.current.children.forEach((child, i) => {
-      const frag = fragments[i];
-      child.rotation.x += frag.rotationSpeed[0];
-      child.rotation.y += frag.rotationSpeed[1];
-      child.rotation.z += frag.rotationSpeed[2];
-    });
-  });
-
-  if (!trigger) return null;
-
-  return (
-    <group ref={groupRef}>
-      {fragments.map((frag, i) => (
-        <mesh key={i} position={frag.position} rotation={frag.rotation}>
-          <shapeGeometry args={[frag.shape]} />
-          <meshBasicMaterial
-            color="#8844ff"
-            transparent
-            opacity={0.6}
-            side={THREE.DoubleSide}
-            blending={THREE.AdditiveBlending}
-          />
-        </mesh>
-      ))}
-    </group>
-  );
-}
-
-// Volumetric light beams from crater
-function VoidBeams({ trigger }: { trigger: boolean }) {
-  const groupRef = useRef<THREE.Group>(null);
-
-  useFrame((state) => {
-    if (!trigger || !groupRef.current) return;
-    const time = state.clock.getElapsedTime();
-
-    groupRef.current.children.forEach((child, i) => {
-      const pulse = Math.sin(time * 2 + i * 0.5) * 0.3 + 0.7;
-      (child as THREE.Mesh).material.opacity = 0.4 * pulse;
-    });
-  });
-
-  if (!trigger) return null;
-
-  const beams = [];
-  for (let i = 0; i < 20; i++) {
-    const angle = (i / 20) * Math.PI - Math.PI / 2;
-    const length = 8 + Math.random() * 4;
-
-    beams.push({
-      angle,
-      length,
-      width: 0.05 + Math.random() * 0.05,
+      this.shardsMeshes.push(mesh);
+      this.scene.add(mesh);
     });
   }
 
-  return (
-    <group ref={groupRef} position={[0, -15, 0]}>
-      {beams.map((beam, i) => {
-        const geometry = new THREE.CylinderGeometry(beam.width, beam.width * 0.3, beam.length, 8, 1, true);
-        const material = new THREE.MeshBasicMaterial({
-          color: new THREE.Color(0.5, 0.2, 0.8),
-          transparent: true,
-          opacity: 0.4,
-          side: THREE.DoubleSide,
-          blending: THREE.AdditiveBlending,
-        });
+  update() {
+    const deltaTime = this.clock.getDelta();
+    this.timeline.time += deltaTime;
 
-        return (
-          <mesh
-            key={i}
-            geometry={geometry}
-            material={material}
-            position={[
-              Math.cos(beam.angle) * 0.5,
-              beam.length / 2,
-              Math.sin(beam.angle) * 0.5
-            ]}
-            rotation={[0, 0, beam.angle + Math.PI / 2]}
-          />
-        );
-      })}
-    </group>
-  );
-}
+    // Update film grain
+    if (this.grainPass.uniforms['time']) {
+      this.grainPass.uniforms['time'].value = this.timeline.time;
+    }
 
-// Background meteors
-function BackgroundMeteors({ trigger }: { trigger: boolean }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const [meteors, setMeteors] = useState<Array<{
-    id: number;
-    position: THREE.Vector3;
-    velocity: THREE.Vector3;
-    size: number;
-    life: number;
-  }>>([]);
+    // Timeline sequencing
+    if (this.timeline.phase === 'intro' && this.timeline.time > 0.5) {
+      this.startMeteor();
+    }
 
-  useEffect(() => {
-    if (!trigger) return;
+    // Meteor phase
+    if (this.timeline.phase === 'meteor' && this.meteorMesh) {
+      const elapsed = this.timeline.time - this.timeline.meteorStartTime;
 
-    const interval = setInterval(() => {
-      if (Math.random() < 0.7) {
-        const side = Math.random();
-        let pos, vel;
+      // Animate meteor
+      this.meteorMesh.position.y = 50 - elapsed * 12;
+      this.meteorMesh.rotation.x += deltaTime * 0.5;
+      this.meteorMesh.rotation.y += deltaTime * 0.3;
 
-        if (side < 0.33) {
-          pos = new THREE.Vector3(-20 + Math.random() * 15, 20 + Math.random() * 10, -10 + Math.random() * 5);
-          vel = new THREE.Vector3(0.3 + Math.random() * 0.2, -0.5 - Math.random() * 0.3, 0);
-        } else if (side < 0.66) {
-          pos = new THREE.Vector3(5 + Math.random() * 15, 20 + Math.random() * 10, -10 + Math.random() * 5);
-          vel = new THREE.Vector3(-0.3 - Math.random() * 0.2, -0.5 - Math.random() * 0.3, 0);
-        } else {
-          pos = new THREE.Vector3((Math.random() - 0.5) * 40, 20 + Math.random() * 10, -10 + Math.random() * 5);
-          vel = new THREE.Vector3((Math.random() - 0.5) * 0.4, -0.5 - Math.random() * 0.3, 0);
+      // Update meteor shader
+      if (this.meteorMaterial) {
+        this.meteorMaterial.uniforms.time.value = this.timeline.time;
+        this.meteorMaterial.uniforms.heatIntensity.value = 1.0;
+      }
+
+      // Emit trail particles
+      const velocity = new THREE.Vector3(0, -12, 0);
+      this.trailSystem.emit(this.meteorMesh.position, velocity, 5, 'plasma');
+      this.trailSystem.emit(this.meteorMesh.position, velocity, 3, 'ember');
+      this.trailSystem.emit(this.meteorMesh.position, velocity, 2, 'smoke');
+
+      // Impact detection
+      if (this.meteorMesh.position.y < -12) {
+        this.timeline.phase = 'impact';
+        this.timeline.impactTime = this.timeline.time;
+        this.meteorMesh.visible = false;
+        this.createImpactEffects();
+        this.createShatteredGlass();
+
+        // Camera shake
+        this.camera.position.x = Math.random() * 0.5 - 0.25;
+        this.camera.position.y = Math.random() * 0.3 - 0.15;
+
+        // Chromatic aberration spike
+        this.chromaPass.uniforms['amount'].value = 0.004;
+
+        // Bloom spike
+        this.bloomPass.strength = 3.0;
+
+        if (this.onImpact) {
+          this.onImpact();
         }
-
-        setMeteors(prev => [...prev, {
-          id: Date.now() + Math.random(),
-          position: pos,
-          velocity: vel,
-          size: 0.3 + Math.random() * 0.2,
-          life: 1,
-        }]);
-      }
-    }, 1500);
-
-    return () => clearInterval(interval);
-  }, [trigger]);
-
-  useFrame(() => {
-    setMeteors(prev => prev.filter(m => {
-      m.position.add(m.velocity);
-      m.life -= 0.01;
-      return m.life > 0 && m.position.y > -10;
-    }));
-  });
-
-  if (!trigger) return null;
-
-  return (
-    <group ref={groupRef}>
-      {meteors.map(meteor => (
-        <group key={meteor.id} position={meteor.position}>
-          <mesh>
-            <sphereGeometry args={[meteor.size, 8, 8]} />
-            <meshBasicMaterial
-              color="#ffcc88"
-              transparent
-              opacity={meteor.life}
-            />
-          </mesh>
-          <mesh>
-            <sphereGeometry args={[meteor.size * 2, 8, 8]} />
-            <meshBasicMaterial
-              color="#ff8844"
-              transparent
-              opacity={meteor.life * 0.5}
-              blending={THREE.AdditiveBlending}
-            />
-          </mesh>
-        </group>
-      ))}
-    </group>
-  );
-}
-
-// Camera controller
-function CameraController({ impacted }: { impacted: boolean }) {
-  const { camera } = useThree();
-  const impactTime = useRef(0);
-
-  useEffect(() => {
-    camera.position.set(0, 0, 30);
-    camera.lookAt(0, 0, 0);
-  }, [camera]);
-
-  useFrame((state) => {
-    if (impacted && impactTime.current === 0) {
-      impactTime.current = state.clock.getElapsedTime();
-    }
-
-    if (impactTime.current > 0) {
-      const elapsed = state.clock.getElapsedTime() - impactTime.current;
-
-      // Camera shake during impact
-      if (elapsed < 0.5) {
-        const intensity = (0.5 - elapsed) * 2;
-        camera.position.x = Math.sin(elapsed * 50) * intensity * 0.5;
-        camera.position.y = Math.cos(elapsed * 30) * intensity * 0.3;
-      } else {
-        camera.position.x = 0;
-        camera.position.y = 0;
       }
     }
-  });
 
-  return null;
+    // Impact phase
+    if (this.timeline.phase === 'impact') {
+      const impactElapsed = this.timeline.time - this.timeline.impactTime;
+
+      // Camera shake decay
+      const shakeIntensity = Math.max(0, 0.5 - impactElapsed);
+      this.camera.position.x = (Math.random() - 0.5) * shakeIntensity;
+      this.camera.position.y = (Math.random() - 0.5) * shakeIntensity * 0.6;
+
+      // Chromatic aberration decay
+      this.chromaPass.uniforms['amount'].value = Math.max(0, 0.004 - impactElapsed * 0.003);
+
+      // Bloom decay
+      this.bloomPass.strength = Math.max(1.5, 3.0 - impactElapsed * 1.5);
+
+      // Show shards
+      if (impactElapsed > 0.2) {
+        this.shardsMeshes.forEach((shard, i) => {
+          shard.visible = true;
+        });
+      }
+
+      if (impactElapsed > 1.0) {
+        this.timeline.phase = 'crater';
+      }
+    }
+
+    // Update particles
+    this.trailSystem.update(deltaTime);
+
+    // Render
+    this.composer.render();
+  }
+
+  handleResize() {
+    this.camera.aspect = window.innerWidth / window.innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.composer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  dispose() {
+    this.renderer.dispose();
+  }
 }
 
-// Main scene component
-function Scene({ onImpact }: { onImpact: () => void }) {
-  const [impacted, setImpacted] = useState(false);
+// ============================================================================
+// REACT COMPONENT
+// ============================================================================
 
-  const handleImpact = () => {
-    setImpacted(true);
-    onImpact();
-  };
-
-  return (
-    <>
-      <CameraController impacted={impacted} />
-      <Starfield />
-      <Meteor onImpact={handleImpact} />
-      <ExplosionParticles trigger={impacted} />
-      <ShatteredGlass trigger={impacted} />
-      <VoidBeams trigger={impacted} />
-      <BackgroundMeteors trigger={impacted} />
-
-      {/* Crater glow */}
-      {impacted && (
-        <mesh position={[0, -15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <circleGeometry args={[8, 32]} />
-          <meshBasicMaterial
-            color="#6633aa"
-            transparent
-            opacity={0.3}
-            blending={THREE.AdditiveBlending}
-          />
-        </mesh>
-      )}
-
-      {/* Post-processing effects */}
-      <EffectComposer>
-        <Bloom
-          intensity={1.5}
-          luminanceThreshold={0.2}
-          luminanceSmoothing={0.9}
-          mipmapBlur
-        />
-        <ChromaticAberration
-          offset={[0.002, 0.002]}
-          blendFunction={BlendFunction.NORMAL}
-        />
-        <Noise
-          opacity={0.15}
-          blendFunction={BlendFunction.OVERLAY}
-        />
-      </EffectComposer>
-    </>
-  );
-}
-
-// Main IntroScreen component
 export function IntroScreen({ onBegin }: { onBegin: () => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const sceneManagerRef = useRef<SceneManager | null>(null);
   const [showTitle, setShowTitle] = useState(false);
   const [showButton, setShowButton] = useState(false);
   const [buttonHover, setButtonHover] = useState(false);
-  const [titleGlitch, setTitleGlitch] = useState({ active: false, intensity: 0 });
-  const nextGlitchRef = useRef(0);
-
-  const handleImpact = () => {
-    console.log('handleImpact called - showing title and button');
-    setTimeout(() => {
-      console.log('Showing title');
-      setShowTitle(true);
-    }, 1500);
-    setTimeout(() => {
-      console.log('Showing button');
-      setShowButton(true);
-    }, 3000);
-  };
 
   useEffect(() => {
-    if (!showTitle) return;
+    if (!canvasRef.current) return;
 
-    const interval = setInterval(() => {
-      setTitleGlitch({ active: true, intensity: Math.random() });
-      setTimeout(() => {
-        setTitleGlitch({ active: false, intensity: 0 });
-      }, 50 + Math.random() * 100);
-    }, 2000 + Math.random() * 2000);
+    console.log('Initializing Three.js scene');
+    const sceneManager = new SceneManager(canvasRef.current);
+    sceneManagerRef.current = sceneManager;
 
-    return () => clearInterval(interval);
-  }, [showTitle]);
+    sceneManager.onImpact = () => {
+      console.log('Impact callback - showing UI');
+      setTimeout(() => setShowTitle(true), 1500);
+      setTimeout(() => setShowButton(true), 3000);
+    };
+
+    // Animation loop
+    let animationId: number;
+    const animate = () => {
+      sceneManager.update();
+      animationId = requestAnimationFrame(animate);
+    };
+    animate();
+
+    return () => {
+      cancelAnimationFrame(animationId);
+      sceneManager.dispose();
+    };
+  }, []);
 
   return (
     <div className="fixed inset-0 w-full h-full overflow-hidden bg-black">
-      <Canvas
-        camera={{ position: [0, 0, 30], fov: 75 }}
-        gl={{ antialias: true, alpha: false }}
-      >
-        <Scene onImpact={handleImpact} />
-      </Canvas>
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0"
+        style={{ display: 'block', width: '100%', height: '100%' }}
+      />
 
       {showTitle && (
         <div
           className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
           style={{
             top: '35%',
-            transform: titleGlitch.active
-              ? `translate(${(Math.random() - 0.5) * 20 * titleGlitch.intensity}px, ${(Math.random() - 0.5) * 10 * titleGlitch.intensity}px)`
-              : 'translate(0, 0)',
-            transition: titleGlitch.active ? 'none' : 'transform 0.1s ease-out',
+            animation: 'titleFadeIn 1.5s ease-out',
           }}
         >
           <h1
             className="text-8xl font-bold text-white tracking-widest select-none"
             style={{
               fontFamily: "'Rubik Burned', cursive",
-              textShadow: titleGlitch.active
-                ? `
-                  ${(Math.random() - 0.5) * 10}px ${(Math.random() - 0.5) * 10}px 20px rgba(255, 0, 100, ${titleGlitch.intensity}),
-                  ${(Math.random() - 0.5) * 10}px ${(Math.random() - 0.5) * 10}px 20px rgba(0, 255, 255, ${titleGlitch.intensity}),
-                  0 0 40px rgba(150, 100, 200, 0.9),
-                  0 0 80px rgba(100, 50, 150, 0.6),
-                  0 0 120px rgba(80, 40, 120, 0.4)
-                `
-                : `
-                  0 0 40px rgba(150, 100, 200, 0.9),
-                  0 0 80px rgba(100, 50, 150, 0.6),
-                  0 0 120px rgba(80, 40, 120, 0.4)
-                `,
-              filter: titleGlitch.active
-                ? `hue-rotate(${Math.random() * 360}deg) saturate(${1 + titleGlitch.intensity * 2})`
-                : 'none',
-              opacity: titleGlitch.active && Math.random() < 0.3 ? 0.3 : 1,
-              animation: 'titleFloat 3s ease-in-out infinite',
+              textShadow: `
+                0 0 40px rgba(150, 100, 200, 0.9),
+                0 0 80px rgba(100, 50, 150, 0.6),
+                0 0 120px rgba(80, 40, 120, 0.4)
+              `,
+              filter: 'blur(0px)',
             }}
           >
             THE FINAL DESCENT
@@ -632,7 +866,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           style={{
             bottom: '20%',
             transform: 'translateX(-50%)',
-            animation: 'buttonGlitchIn 1.2s ease-out, buttonFloat 4s ease-in-out infinite 1.2s',
+            animation: 'buttonFadeIn 1s ease-out 0.5s both',
           }}
         >
           <div
@@ -648,13 +882,11 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
                 ? `
                   0 0 20px rgba(200, 150, 255, 1),
                   0 0 40px rgba(150, 100, 220, 0.8),
-                  0 0 60px rgba(120, 80, 180, 0.6),
-                  0 0 80px rgba(100, 60, 150, 0.4)
+                  0 0 60px rgba(120, 80, 180, 0.6)
                 `
                 : `
                   0 0 15px rgba(150, 100, 200, 0.8),
-                  0 0 30px rgba(120, 80, 180, 0.6),
-                  0 0 45px rgba(100, 60, 150, 0.4)
+                  0 0 30px rgba(120, 80, 180, 0.6)
                 `,
               filter: buttonHover ? 'brightness(1.3)' : 'brightness(1)',
               letterSpacing: '0.15em',
@@ -666,79 +898,27 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       )}
 
       <style>{`
-        @keyframes titleFloat {
-          0%, 100% {
-            transform: translateY(0px);
-          }
-          50% {
-            transform: translateY(-10px);
-          }
-        }
-
-        @keyframes buttonFloat {
-          0%, 100% {
-            transform: translateX(-50%) translateY(0px);
-          }
-          50% {
-            transform: translateX(-50%) translateY(-8px);
-          }
-        }
-
-        @keyframes buttonGlitchIn {
-          0% {
+        @keyframes titleFadeIn {
+          from {
             opacity: 0;
-            transform: translateX(-50%) translateY(30px);
-            filter: blur(20px) hue-rotate(180deg);
+            transform: translateY(-20px);
+            filter: blur(10px);
           }
-          10% {
-            opacity: 0.2;
-            transform: translateX(calc(-50% + 30px)) translateY(10px);
-            filter: blur(15px) hue-rotate(90deg);
-          }
-          15% {
-            opacity: 0;
-            transform: translateX(calc(-50% - 25px)) translateY(5px);
-          }
-          25% {
-            opacity: 0.5;
-            transform: translateX(calc(-50% + 15px)) translateY(-5px);
-            filter: blur(10px) hue-rotate(270deg);
-          }
-          35% {
-            opacity: 0.1;
-            transform: translateX(calc(-50% - 20px)) translateY(8px);
-          }
-          45% {
-            opacity: 0.7;
-            transform: translateX(calc(-50% + 10px)) translateY(-3px);
-            filter: blur(8px) hue-rotate(45deg);
-          }
-          55% {
-            opacity: 0.3;
-            transform: translateX(calc(-50% - 12px)) translateY(4px);
-          }
-          65% {
-            opacity: 0.8;
-            transform: translateX(calc(-50% + 8px)) translateY(-2px);
-            filter: blur(5px) hue-rotate(180deg);
-          }
-          75% {
-            opacity: 0.4;
-            transform: translateX(calc(-50% - 6px)) translateY(2px);
-          }
-          85% {
-            opacity: 0.9;
-            transform: translateX(calc(-50% + 3px)) translateY(-1px);
-            filter: blur(2px) hue-rotate(90deg);
-          }
-          95% {
-            opacity: 0.6;
-            transform: translateX(calc(-50% - 2px)) translateY(1px);
-          }
-          100% {
+          to {
             opacity: 1;
-            transform: translateX(-50%) translateY(0px);
-            filter: blur(0px) hue-rotate(0deg);
+            transform: translateY(0);
+            filter: blur(0px);
+          }
+        }
+
+        @keyframes buttonFadeIn {
+          from {
+            opacity: 0;
+            transform: translateX(-50%) translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
           }
         }
       `}</style>
