@@ -205,87 +205,146 @@ const RefractionShardVertexShader = `
   }
 `;
 
-const RefractionShardFragmentShader = `
+const RealityCrackFragmentShader = `
   uniform sampler2D tDiffuse;
   uniform vec2 resolution;
   uniform float time;
-  uniform float refractionStrength;
-  uniform float glitchAmount;
-  uniform float distanceFromCenter;
+  uniform float intensity;
+  uniform vec2 craterCenter; // Screen space center of crater
+  uniform float craterRadius; // Radius of effect
 
-  varying vec3 vNormal;
-  varying vec3 vPosition;
   varying vec2 vUv;
   varying vec4 vWorldPosition;
 
-  // Hash function for random numbers
+  // Hash functions
   float hash(float n) { return fract(sin(n) * 43758.5453123); }
+  float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+
+  // Voronoi noise for crack patterns
+  vec2 voronoi(vec2 x) {
+    vec2 n = floor(x);
+    vec2 f = fract(x);
+
+    float minDist = 8.0;
+    vec2 minPoint;
+
+    for(int j = -1; j <= 1; j++) {
+      for(int i = -1; i <= 1; i++) {
+        vec2 b = vec2(float(i), float(j));
+        vec2 r = b - f + vec2(hash2(n + b), hash2(n + b + 100.0));
+        float d = length(r);
+
+        if(d < minDist) {
+          minDist = d;
+          minPoint = r;
+        }
+      }
+    }
+
+    return vec2(minDist, hash2(n + minPoint));
+  }
+
+  // Fractal noise
+  float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+
+    float a = hash2(i);
+    float b = hash2(i + vec2(1.0, 0.0));
+    float c = hash2(i + vec2(0.0, 1.0));
+    float d = hash2(i + vec2(1.0, 1.0));
+
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
 
   void main() {
     vec2 screenUV = gl_FragCoord.xy / resolution;
+    vec2 centeredUV = screenUV - craterCenter;
+    float distFromCrater = length(centeredUV);
 
-    // Glitch effect - random offset and static
-    float glitchNoise = hash(floor(time * 10.0) + vPosition.x * 100.0);
+    // Fade out effect beyond crater radius
+    float radialFade = smoothstep(craterRadius * 1.2, craterRadius * 0.3, distFromCrater);
+
+    if(radialFade < 0.01) {
+      // Outside effect radius - show normal background
+      gl_FragColor = texture2D(tDiffuse, screenUV);
+      return;
+    }
+
+    // Generate procedural crack pattern using Voronoi
+    vec2 crackCoord = centeredUV * 15.0 + time * 0.1;
+    vec2 voronoiResult = voronoi(crackCoord);
+    float crackPattern = voronoiResult.x;
+
+    // Add fractal detail to cracks
+    float fractalNoise = noise(centeredUV * 30.0 + time * 0.2);
+    fractalNoise += noise(centeredUV * 60.0 - time * 0.15) * 0.5;
+    fractalNoise += noise(centeredUV * 120.0 + time * 0.3) * 0.25;
+
+    // Identify crack edges (thin lines where Voronoi cells meet)
+    float crackEdge = smoothstep(0.02, 0.0, crackPattern);
+
+    // Cracks appear and disappear with time
+    float crackFlicker = hash(floor(time * 3.0 + voronoiResult.y * 10.0)) * 0.5 + 0.5;
+    crackEdge *= crackFlicker;
+
+    // Heavy glitch effect
+    float glitchTime = floor(time * 15.0);
+    float glitchStrength = hash(glitchTime) * 0.5 + 0.5;
     vec2 glitchOffset = vec2(
-      (glitchNoise - 0.5) * glitchAmount * 0.02,
-      (hash(glitchNoise) - 0.5) * glitchAmount * 0.02
-    );
+      (hash(glitchTime + 1.0) - 0.5) * 0.03,
+      (hash(glitchTime + 2.0) - 0.5) * 0.03
+    ) * glitchStrength * radialFade;
 
-    // Calculate refraction with glitch
-    vec3 viewDir = normalize(cameraPosition - vWorldPosition.xyz);
-    vec3 refractDir = refract(viewDir, vNormal, 0.90);
-    vec2 refractOffset = refractDir.xy * refractionStrength * 0.06 + glitchOffset;
+    // Warp/distort reality along crack lines
+    float distortionStrength = crackEdge * 0.08 + fractalNoise * 0.02;
+    vec2 distortedUV = screenUV + vec2(
+      sin(centeredUV.y * 20.0 + time) * distortionStrength,
+      cos(centeredUV.x * 20.0 - time) * distortionStrength
+    ) * radialFade;
 
-    // Sample background with chromatic aberration
-    vec2 uv = screenUV + refractOffset;
-    float r = texture2D(tDiffuse, uv + refractOffset * 0.02).r;
-    float g = texture2D(tDiffuse, uv).g;
-    float b = texture2D(tDiffuse, uv - refractOffset * 0.02).b;
+    distortedUV += glitchOffset;
 
-    vec3 refractedColor = vec3(r, g, b);
+    // Sample distorted background with chromatic aberration
+    float aberration = 0.005 * radialFade * (crackEdge + 0.5);
+    vec3 refractedColor;
+    refractedColor.r = texture2D(tDiffuse, distortedUV + vec2(aberration, 0)).r;
+    refractedColor.g = texture2D(tDiffuse, distortedUV).g;
+    refractedColor.b = texture2D(tDiffuse, distortedUV - vec2(aberration, 0)).b;
 
-    // Dark crack edges
-    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.0);
-    vec3 edgeColor = vec3(0.02, 0.02, 0.05); // Very dark edges for strong contrast
-    float edgeMask = smoothstep(0.75, 0.9, fresnel);
+    // OMINOUS LIGHT leaking from cracks (another dimension bleeding through)
+    float pulse = sin(time * 2.0) * 0.3 + 0.7;
+    float lightIntensity = crackEdge * 4.0 * pulse * intensity;
 
-    // OMINOUS bright light behind shattered glass - much more intense
-    // Pulsing ominous light
-    float pulse = sin(time * 1.5) * 0.3 + 0.7; // Pulsing between 0.4 and 1.0
-    float lightIntensity = fresnel * fresnel * 3.5 * pulse; // Much brighter, concentrated at cracks
-
-    // Color cycle: intense white -> glowing purple -> electric blue
+    // Otherworldly color cycling
     vec3 lightColor = mix(
-      vec3(1.2, 1.2, 1.4), // Bright white with blue tint
+      vec3(1.3, 1.3, 1.5), // Bright ethereal white
       mix(
-        vec3(1.0, 0.3, 1.2), // Intense purple
-        vec3(0.5, 0.8, 1.5), // Electric blue
-        sin(time * 2.0) * 0.5 + 0.5
+        vec3(1.2, 0.2, 1.4), // Intense purple
+        vec3(0.3, 0.9, 1.6), // Electric blue
+        sin(time * 2.5 + voronoiResult.y * 6.28) * 0.5 + 0.5
       ),
-      0.6
+      0.7
     );
 
-    // Add flickering variation
-    float flicker = hash(floor(time * 8.0) + vPosition.x * 10.0) * 0.3 + 0.7;
-    vec3 ominousLight = lightColor * lightIntensity * flicker;
+    vec3 ominousLight = lightColor * lightIntensity;
 
-    // Gradient fade based on distance from crater center
-    float fadeOut = smoothstep(1.0, 0.3, distanceFromCenter);
+    // Digital glitch artifacts
+    float digitalGlitch = hash(floor(gl_FragCoord.x * 0.5) + floor(gl_FragCoord.y * 0.5) + glitchTime);
+    vec3 glitchColor = vec3(digitalGlitch * 0.2 * glitchStrength * radialFade);
 
-    // Combine effects - stars visible through glass but with ominous light leaking through
-    vec3 finalColor = refractedColor * (0.7 + fresnel * 0.3); // Keep stars somewhat visible
-    finalColor += ominousLight * fadeOut * 2.0; // Strong ominous light
-    finalColor = mix(finalColor, edgeColor, edgeMask * 0.9); // Very dark cracks for contrast
+    // Glitchy/stuttering boundary
+    float boundaryGlitch = smoothstep(craterRadius * 1.2, craterRadius * 1.15, distFromCrater);
+    boundaryGlitch *= step(hash(glitchTime + floor(atan(centeredUV.y, centeredUV.x) * 8.0)), 0.7);
 
-    // Static glitch overlay
-    float staticNoise = hash(gl_FragCoord.x + gl_FragCoord.y * 100.0 + time * 50.0);
-    finalColor += vec3(staticNoise * glitchAmount * 0.1);
+    // Combine: distorted stars + ominous light + glitch
+    vec3 finalColor = refractedColor;
+    finalColor += ominousLight * radialFade;
+    finalColor += glitchColor;
+    finalColor = mix(finalColor, vec3(0.0), boundaryGlitch * 0.3);
 
-    // Variable opacity with fade and glitch flicker
-    float glitchFlicker = hash(floor(time * 20.0)) * glitchAmount;
-    float opacity = (0.6 + fresnel * 0.3) * fadeOut * (1.0 - glitchFlicker * 0.3);
-
-    gl_FragColor = vec4(finalColor, opacity);
+    gl_FragColor = vec4(finalColor, 1.0);
   }
 `;
 
@@ -773,74 +832,40 @@ class SceneManager {
   }
 
   createShatteredGlass() {
-    console.log('Creating shattered glass effect around crash site');
+    console.log('Creating reality crack effect around crash site');
 
-    // Create shards ONLY around impact point (0, -5, 5)
-    // Positioned to frame the "Begin the Descent" button area
+    // Create a SINGLE large plane covering the crater area
+    // This will use procedural shader to generate crack patterns
     const impactPoint = new THREE.Vector3(0, -5, 5);
-    const shardCount = 40;
+    const effectRadius = 50; // Large radius to cover crater and button area
 
-    // Create shards in expanding rings with gradient fade
-    for (let i = 0; i < shardCount; i++) {
-      const ring = Math.floor(i / 13); // 3 rings
-      const ringRadius = 12 + ring * 10; // 12, 22, 32 units
-      const angle = (i / 13) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+    // Create circular plane geometry
+    const geometry = new THREE.PlaneGeometry(effectRadius * 2, effectRadius * 2, 1, 1);
 
-      const distFromCenter = ringRadius + (Math.random() - 0.5) * 6;
-      const pointX = Math.cos(angle) * distFromCenter;
-      const pointZ = Math.sin(angle) * distFromCenter;
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse: { value: null },
+        resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+        time: { value: 0 },
+        intensity: { value: 0.0 }, // Start at 0, will fade in
+        craterCenter: { value: new THREE.Vector2(0.5, 0.5) }, // Will be updated each frame
+        craterRadius: { value: 0.3 }, // Screen space radius
+      },
+      vertexShader: RefractionShardVertexShader,
+      fragmentShader: RealityCrackFragmentShader,
+      transparent: false,
+      depthWrite: false,
+      depthTest: false,
+    });
 
-      // Create irregular polygon shard
-      const sides = 5 + Math.floor(Math.random() * 3);
-      const shape = new THREE.Shape();
-      const size = 5 + Math.random() * 4;
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.copy(impactPoint);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.visible = false;
+    mesh.userData.targetIntensity = 1.0;
 
-      for (let j = 0; j < sides; j++) {
-        const vertAngle = (j / sides) * Math.PI * 2 + (Math.random() - 0.5) * 0.6;
-        const r = size * (0.5 + Math.random() * 0.5);
-        const x = Math.cos(vertAngle) * r;
-        const y = Math.sin(vertAngle) * r;
-
-        if (j === 0) shape.moveTo(x, y);
-        else shape.lineTo(x, y);
-      }
-      shape.closePath();
-
-      const geometry = new THREE.ShapeGeometry(shape);
-
-      // Calculate distance from crater center for fade gradient (0 to 1)
-      const normalizedDist = Math.min(distFromCenter / 40, 1.0);
-
-      const material = new THREE.ShaderMaterial({
-        uniforms: {
-          tDiffuse: { value: null },
-          resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-          time: { value: 0 },
-          refractionStrength: { value: 4.0 },
-          glitchAmount: { value: 0.5 },
-          distanceFromCenter: { value: normalizedDist },
-        },
-        vertexShader: RefractionShardVertexShader,
-        fragmentShader: RefractionShardFragmentShader,
-        transparent: true,
-        side: THREE.DoubleSide,
-        blending: THREE.NormalBlending, // Normal blending to preserve stars
-      });
-
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.set(impactPoint.x + pointX, impactPoint.y, impactPoint.z + pointZ);
-      mesh.rotation.x = -Math.PI / 2 + (Math.random() - 0.5) * 0.3;
-      mesh.rotation.z = Math.random() * Math.PI * 2;
-      mesh.scale.set(0, 0, 0);
-      mesh.visible = false;
-      mesh.userData.targetScale = 1.0;
-      mesh.userData.rotationSpeed = (Math.random() - 0.5) * 1.5;
-      mesh.userData.basePosition = mesh.position.clone();
-      mesh.userData.glitchPhase = Math.random() * Math.PI * 2;
-
-      this.shardsMeshes.push(mesh);
-      this.scene.add(mesh);
-    }
+    this.shardsMeshes.push(mesh);
+    this.scene.add(mesh);
   }
 
   update() {
@@ -1008,43 +1033,38 @@ class SceneManager {
         this.craterGlow.scale.set(pulse, pulse, 1);
       }
 
-      // Show shards with staggered timing and glitch effects
-      if (impactElapsed > 0.05) {
-        this.shardsMeshes.forEach((shard, i) => {
-          const shardDelay = i * 0.005;
+      // Show reality crack effect - fade in intensity
+      if (impactElapsed > 0.05 && this.shardsMeshes.length > 0) {
+        const crackPlane = this.shardsMeshes[0];
+        crackPlane.visible = true;
 
-          if (impactElapsed > 0.05 + shardDelay) {
-            shard.visible = true;
+        const crackElapsed = impactElapsed - 0.05;
 
-            const shardElapsed = impactElapsed - (0.05 + shardDelay);
+        // Fade in intensity over 0.3 seconds
+        const intensityProgress = Math.min(crackElapsed / 0.3, 1.0);
+        const easedIntensity = 1.0 - Math.pow(1.0 - intensityProgress, 2);
 
-            // Dramatic scale-in with easing
-            const scaleProgress = Math.min(shardElapsed / 0.25, 1.0);
-            const easedScale = 1.0 - Math.pow(1.0 - scaleProgress, 3); // Cubic ease-out
-            const currentScale = easedScale * shard.userData.targetScale;
-            shard.scale.set(currentScale, currentScale, currentScale);
+        const material = crackPlane.material as THREE.ShaderMaterial;
 
-            // Glitch effect - random position jitter
-            const glitchIntensity = 0.5 + Math.sin(this.timeline.time * 15 + shard.userData.glitchPhase) * 0.5;
-            const jitterX = (Math.random() - 0.5) * glitchIntensity * 0.3;
-            const jitterZ = (Math.random() - 0.5) * glitchIntensity * 0.3;
+        // Update uniforms
+        if (material.uniforms.intensity) {
+          material.uniforms.intensity.value = easedIntensity;
+        }
+        if (material.uniforms.time) {
+          material.uniforms.time.value = this.timeline.time;
+        }
 
-            shard.position.x = shard.userData.basePosition.x + jitterX;
-            shard.position.z = shard.userData.basePosition.z + jitterZ;
+        // Calculate crater center in screen space
+        const craterWorldPos = crackPlane.position.clone();
+        craterWorldPos.project(this.camera);
 
-            // Slow rotation
-            shard.rotation.z += deltaTime * shard.userData.rotationSpeed * 0.3;
+        // Convert from NDC (-1 to 1) to screen space (0 to 1)
+        const craterScreenX = (craterWorldPos.x + 1.0) * 0.5;
+        const craterScreenY = (craterWorldPos.y + 1.0) * 0.5;
 
-            // Update shader uniforms for time and glitch
-            const material = shard.material as THREE.ShaderMaterial;
-            if (material.uniforms.time) {
-              material.uniforms.time.value = this.timeline.time;
-            }
-            if (material.uniforms.glitchAmount) {
-              material.uniforms.glitchAmount.value = glitchIntensity;
-            }
-          }
-        });
+        if (material.uniforms.craterCenter) {
+          material.uniforms.craterCenter.value.set(craterScreenX, craterScreenY);
+        }
       }
 
       if (impactElapsed > 1.5) {
@@ -1065,30 +1085,33 @@ class SceneManager {
         material.opacity = 0.85;
       }
 
-      // Continue animating shards with glitch effects
-      this.shardsMeshes.forEach((shard, i) => {
-        if (shard.visible) {
-          // Continuous glitch effect - random position jitter
-          const glitchIntensity = 0.3 + Math.sin(this.timeline.time * 12 + shard.userData.glitchPhase) * 0.3;
-          const jitterX = (Math.random() - 0.5) * glitchIntensity * 0.25;
-          const jitterZ = (Math.random() - 0.5) * glitchIntensity * 0.25;
+      // Continue reality crack effect
+      if (this.shardsMeshes.length > 0) {
+        const crackPlane = this.shardsMeshes[0];
+        if (crackPlane.visible) {
+          const material = crackPlane.material as THREE.ShaderMaterial;
 
-          shard.position.x = shard.userData.basePosition.x + jitterX;
-          shard.position.z = shard.userData.basePosition.z + jitterZ;
-
-          // Slow rotation
-          shard.rotation.z += deltaTime * shard.userData.rotationSpeed * 0.25;
-
-          // Update shader time and glitch
-          const material = shard.material as THREE.ShaderMaterial;
+          // Update time uniform for animated cracks
           if (material.uniforms.time) {
             material.uniforms.time.value = this.timeline.time;
           }
-          if (material.uniforms.glitchAmount) {
-            material.uniforms.glitchAmount.value = glitchIntensity;
+
+          // Keep intensity at full
+          if (material.uniforms.intensity) {
+            material.uniforms.intensity.value = 1.0;
+          }
+
+          // Update crater center in screen space
+          const craterWorldPos = crackPlane.position.clone();
+          craterWorldPos.project(this.camera);
+          const craterScreenX = (craterWorldPos.x + 1.0) * 0.5;
+          const craterScreenY = (craterWorldPos.y + 1.0) * 0.5;
+
+          if (material.uniforms.craterCenter) {
+            material.uniforms.craterCenter.value.set(craterScreenX, craterScreenY);
           }
         }
-      });
+      }
     }
 
     // Update particles
