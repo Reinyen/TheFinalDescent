@@ -988,19 +988,19 @@ class SceneManager {
       this.meteorMesh.rotation.y += deltaTime * 1.8;
 
       // Meteor growth: tiny dot for 2s, then explosive growth in last 1s
-      // First 2 seconds (elapsed 0-2): slow but VISIBLE growth 0.01 → 2.0
-      // Last second (elapsed 2-3): explosive dramatic growth 2.0 → 10 (1/12 screen width)
+      // REDUCED BY 50%: First 2 seconds (elapsed 0-2): slow but VISIBLE growth 0.01 → 1.0
+      // REDUCED BY 50%: Last second (elapsed 2-3): explosive dramatic growth 1.0 → 5.0
       let scale;
       if (elapsed < 2.0) {
         // Slow but visible growth for first 2 seconds
         const firstTwoProgress = elapsed / 2.0;
-        scale = 0.01 + firstTwoProgress * 1.99; // 0.01 to 2.0 - clearly growing
+        scale = 0.01 + firstTwoProgress * 0.99; // 0.01 to 1.0 (REDUCED BY 50%)
       } else {
         // Last second: dramatic explosive growth to final size
         const lastSecondProgress = (elapsed - 2.0) / 1.0;
         // Exponential curve for "OH MY GOD IT'S HUGE" effect
         const explosiveGrowth = Math.pow(lastSecondProgress, 0.4);
-        scale = 2.0 + explosiveGrowth * 8.0; // 2.0 to 10.0
+        scale = 1.0 + explosiveGrowth * 4.0; // 1.0 to 5.0 (REDUCED BY 50%)
       }
 
       this.meteorMesh.scale.set(scale, scale, scale);
