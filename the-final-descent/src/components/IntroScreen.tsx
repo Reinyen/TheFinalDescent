@@ -219,28 +219,35 @@ const RefractionShardFragmentShader = `
   void main() {
     vec2 screenUV = gl_FragCoord.xy / resolution;
 
-    // Calculate refraction offset based on normal
+    // Calculate refraction offset based on normal (stronger effect)
     vec3 viewDir = normalize(cameraPosition - vWorldPosition.xyz);
-    vec3 refractDir = refract(viewDir, vNormal, 0.9);
-    vec2 refractOffset = refractDir.xy * refractionStrength * 0.05;
+    vec3 refractDir = refract(viewDir, vNormal, 0.85);
+    vec2 refractOffset = refractDir.xy * refractionStrength * 0.08;
 
-    // Sample background with chromatic dispersion
+    // Sample background with strong chromatic aberration
     vec2 uv = screenUV + refractOffset;
-    float r = texture2D(tDiffuse, uv + refractOffset * 0.01).r;
+    float r = texture2D(tDiffuse, uv + refractOffset * 0.03).r;
     float g = texture2D(tDiffuse, uv).g;
-    float b = texture2D(tDiffuse, uv - refractOffset * 0.01).b;
+    float b = texture2D(tDiffuse, uv - refractOffset * 0.03).b;
 
     vec3 refractedColor = vec3(r, g, b);
 
-    // Edge highlight (Fresnel)
-    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 3.0);
-    vec3 edgeGlow = vec3(0.6, 0.4, 0.9) * fresnel * 0.5;
+    // Strong edge highlight (Fresnel) with purple glow
+    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.5);
+    vec3 edgeGlow = vec3(0.8, 0.5, 1.0) * fresnel * 1.2;
 
-    // Slight purple tint
-    vec3 finalColor = mix(refractedColor, refractedColor * vec3(0.9, 0.85, 1.1), 0.15);
-    finalColor += edgeGlow;
+    // Purple/blue tint for eerie effect
+    vec3 glassColor = mix(refractedColor, refractedColor * vec3(0.85, 0.8, 1.2), 0.25);
 
-    gl_FragColor = vec4(finalColor, 0.85 + fresnel * 0.15);
+    // Add shimmer effect
+    float shimmer = sin(time * 2.0 + vPosition.x * 10.0 + vPosition.y * 10.0) * 0.1 + 0.9;
+    glassColor *= shimmer;
+
+    // Combine with edge glow
+    vec3 finalColor = glassColor + edgeGlow;
+
+    // Higher opacity for better visibility
+    gl_FragColor = vec4(finalColor, 0.75 + fresnel * 0.25);
   }
 `;
 
@@ -688,29 +695,36 @@ class SceneManager {
     console.log('Creating shattered glass effect');
 
     // Generate shards around impact point (0, -20, -170)
-    const shardCount = 35;
+    // Using radial distribution with multiple rings for professional look
+    const shardCount = 50;
     const impactCenter = new THREE.Vector2(0, -170);
     const points: THREE.Vector2[] = [];
 
-    // Create layered distribution for more density (larger radius for visibility)
-    for (let i = 0; i < shardCount; i++) {
-      const angle = (i / shardCount) * Math.PI * 2 + Math.random() * 0.5;
-      const distance = 10 + Math.random() * 20;
-      points.push(new THREE.Vector2(
-        impactCenter.x + Math.cos(angle) * distance,
-        impactCenter.y + Math.sin(angle) * distance
-      ));
+    // Create multiple rings of shards for depth
+    const rings = 3;
+    for (let ring = 0; ring < rings; ring++) {
+      const shardsInRing = Math.floor(shardCount / rings);
+      const ringRadius = 15 + ring * 12;
+
+      for (let i = 0; i < shardsInRing; i++) {
+        const angle = (i / shardsInRing) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+        const distance = ringRadius + (Math.random() - 0.5) * 8;
+        points.push(new THREE.Vector2(
+          impactCenter.x + Math.cos(angle) * distance,
+          impactCenter.y + Math.sin(angle) * distance
+        ));
+      }
     }
 
-    // Create shards (larger for visibility at distance)
+    // Create shards with varied sizes for realism
     points.forEach((point, i) => {
       const sides = 5 + Math.floor(Math.random() * 3);
       const shape = new THREE.Shape();
-      const size = 3 + Math.random() * 2;
+      const size = 4 + Math.random() * 3;
 
       for (let j = 0; j < sides; j++) {
-        const angle = (j / sides) * Math.PI * 2 + Math.random() * 0.4;
-        const r = size * (0.6 + Math.random() * 0.4);
+        const angle = (j / sides) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+        const r = size * (0.5 + Math.random() * 0.5);
         const x = Math.cos(angle) * r;
         const y = Math.sin(angle) * r;
 
@@ -725,20 +739,23 @@ class SceneManager {
           tDiffuse: { value: null },
           resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
           time: { value: 0 },
-          refractionStrength: { value: 2.5 },
+          refractionStrength: { value: 3.5 }, // Stronger refraction
         },
         vertexShader: RefractionShardVertexShader,
         fragmentShader: RefractionShardFragmentShader,
         transparent: true,
         side: THREE.DoubleSide,
-        blending: THREE.NormalBlending,
+        blending: THREE.AdditiveBlending, // Use additive for glass-like glow
       });
 
       const mesh = new THREE.Mesh(geometry, material);
       mesh.position.set(point.x, -20, point.y);
-      mesh.rotation.x = -Math.PI / 2 + (Math.random() - 0.5) * 0.3;
+      mesh.rotation.x = -Math.PI / 2 + (Math.random() - 0.5) * 0.4;
       mesh.rotation.z = Math.random() * Math.PI * 2;
+      mesh.scale.set(0, 0, 0); // Start invisible for dramatic entrance
       mesh.visible = false;
+      mesh.userData.targetScale = 1.0;
+      mesh.userData.rotationSpeed = (Math.random() - 0.5) * 2;
 
       this.shardsMeshes.push(mesh);
       this.scene.add(mesh);
@@ -781,10 +798,12 @@ class SceneManager {
       // Scale grows with speed (using the same accelerated progress)
       let scale = 0.05 + progress * 0.95;
 
-      // During last 2 seconds (when elapsed > 1.0), grow an additional 15%
-      if (elapsed > 1.0) {
+      // During last 2 seconds (when elapsed >= 1.0), grow dramatically by 50%
+      // Using cubic easing for more dramatic visual growth
+      if (elapsed >= 1.0) {
         const lastTwoSecondsProgress = Math.min((elapsed - 1.0) / 2.0, 1.0);
-        scale *= (1.0 + lastTwoSecondsProgress * 0.15);
+        const cubicGrowth = lastTwoSecondsProgress * lastTwoSecondsProgress * lastTwoSecondsProgress;
+        scale *= (1.0 + cubicGrowth * 0.5); // 50% additional growth
       }
 
       this.meteorMesh.scale.set(scale, scale, scale);
@@ -795,11 +814,13 @@ class SceneManager {
         this.meteorMaterial.uniforms.heatIntensity.value = 1.0 + progress * 0.5;
       }
 
-      // Emit trail particles - much denser trail
-      const velocity = endPos.clone().sub(startPos).normalize().multiplyScalar(50);
-      this.trailSystem.emit(this.meteorMesh.position, velocity, 15, 'plasma');
-      this.trailSystem.emit(this.meteorMesh.position, velocity, 10, 'ember');
-      this.trailSystem.emit(this.meteorMesh.position, velocity, 8, 'smoke');
+      // Emit trail particles - denser and faster as meteor accelerates
+      const velocity = endPos.clone().sub(startPos).normalize().multiplyScalar(50 * (1 + progress));
+      const trailDensity = 1.0 + progress * 2.0; // More particles as it speeds up
+
+      this.trailSystem.emit(this.meteorMesh.position, velocity, Math.floor(20 * trailDensity), 'plasma');
+      this.trailSystem.emit(this.meteorMesh.position, velocity, Math.floor(15 * trailDensity), 'ember');
+      this.trailSystem.emit(this.meteorMesh.position, velocity, Math.floor(10 * trailDensity), 'smoke');
 
       // Gravitational star pull effect
       if (this.starfield && this.starOriginalPositions) {
@@ -896,17 +917,35 @@ class SceneManager {
         this.craterGlow.scale.set(pulse, pulse, 1);
       }
 
-      // Show shards with staggered timing
-      if (impactElapsed > 0.15) {
+      // Show shards with staggered timing and dramatic entrance
+      if (impactElapsed > 0.1) {
         this.shardsMeshes.forEach((shard, i) => {
-          const shardDelay = i * 0.01;
-          if (impactElapsed > 0.15 + shardDelay) {
+          const shardDelay = i * 0.008;
+          if (impactElapsed > 0.1 + shardDelay) {
             shard.visible = true;
 
-            // Subtle animation - shards slowly float up
-            const shardElapsed = impactElapsed - (0.15 + shardDelay);
-            shard.position.y = -20 + shardElapsed * 0.3;
-            shard.rotation.z += deltaTime * 0.5;
+            const shardElapsed = impactElapsed - (0.1 + shardDelay);
+
+            // Dramatic scale-in with easing
+            const scaleProgress = Math.min(shardElapsed / 0.4, 1.0);
+            const easedScale = 1.0 - Math.pow(1.0 - scaleProgress, 3); // Cubic ease-out
+            const currentScale = easedScale * shard.userData.targetScale;
+            shard.scale.set(currentScale, currentScale, currentScale);
+
+            // Slow upward float with slight wobble
+            const baseY = -20;
+            const floatHeight = shardElapsed * 0.4;
+            const wobble = Math.sin(shardElapsed * 3 + i * 0.5) * 0.2;
+            shard.position.y = baseY + floatHeight + wobble;
+
+            // Continuous rotation
+            shard.rotation.z += deltaTime * shard.userData.rotationSpeed;
+
+            // Update shader time uniform for shimmer effect
+            const material = shard.material as THREE.ShaderMaterial;
+            if (material.uniforms.time) {
+              material.uniforms.time.value = this.timeline.time;
+            }
           }
         });
       }
@@ -916,7 +955,7 @@ class SceneManager {
       }
     }
 
-    // Crater phase - maintain the eerie glow
+    // Crater phase - maintain the eerie glow and shard animation
     if (this.timeline.phase === 'crater') {
       if (this.craterGlow) {
         const pulse = Math.sin(this.timeline.time * 2) * 0.2 + 0.9;
@@ -928,6 +967,23 @@ class SceneManager {
         material.color.setHSL(0.68 + hueShift, 1.0, 0.55);
         material.opacity = 0.85;
       }
+
+      // Continue animating shards
+      this.shardsMeshes.forEach((shard, i) => {
+        if (shard.visible) {
+          // Gentle floating motion
+          shard.position.y += Math.sin(this.timeline.time + i * 0.5) * deltaTime * 0.1;
+
+          // Slow rotation
+          shard.rotation.z += deltaTime * shard.userData.rotationSpeed * 0.3;
+
+          // Update shader time
+          const material = shard.material as THREE.ShaderMaterial;
+          if (material.uniforms.time) {
+            material.uniforms.time.value = this.timeline.time;
+          }
+        }
+      });
     }
 
     // Update particles
@@ -1025,7 +1081,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
         <div
           className="absolute left-1/2 pointer-events-auto select-none"
           style={{
-            bottom: '20%',
+            top: '60%',
             transform: 'translateX(-50%)',
             animation: 'buttonFadeIn 1s ease-out 0.5s both',
           }}
@@ -1037,7 +1093,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
             className="cursor-pointer transition-all duration-300"
             style={{
               fontFamily: "'Rubik Marker Hatch', cursive",
-              fontSize: '1.5rem',
+              fontSize: '0.75rem',
               color: 'white',
               textShadow: buttonHover
                 ? `
