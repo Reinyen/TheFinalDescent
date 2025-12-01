@@ -118,7 +118,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           const dy = star.y - meteorRef.current.y;
           const distance = Math.sqrt(dx * dx + dy * dy);
 
-          if (distance < 150 && star.y < meteorRef.current.y) {
+          if (distance < 150 && star.y < meteorRef.current.y && !star.pulledByMeteor) {
             star.pulledByMeteor = true;
             meteorRef.current.pulledStars.push(star);
           }
@@ -252,10 +252,14 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           const shockwaveRadius = timeSinceImpact * 500;
           const shockwaveAlpha = Math.max(0, 0.6 - timeSinceImpact);
 
+          // Guard against a negative inner radius during the very first
+          // frames of the shockwave animation (r0 must be >= 0).
+          const innerRadius = Math.max(0, shockwaveRadius - 20);
+
           const shockGradient = ctx.createRadialGradient(
             canvas.width / 2,
             canvas.height,
-            shockwaveRadius - 20,
+            innerRadius,
             canvas.width / 2,
             canvas.height,
             shockwaveRadius + 20
