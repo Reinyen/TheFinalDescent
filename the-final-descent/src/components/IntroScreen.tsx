@@ -314,18 +314,26 @@ const RealityCrackFragmentShader = `
     float pulse = sin(time * 2.5) * 0.4 + 0.6;
     float fastPulse = sin(time * 5.0) * 0.3 + 0.7;
 
-    // Generate Dr. Strange-style crystalline crack pattern
-    float crackPattern = getCrackPattern(centeredUV, time);
+    // SIMPLE GUARANTEED VISIBLE CRACKS
+    float angle = atan(centeredUV.y, centeredUV.x);
+    float radius = length(centeredUV);
 
-    // Add secondary cracks at different angles for complexity
-    float crackPattern2 = getCrackPattern(centeredUV * 1.3 + vec2(0.5, 0.3), time * 0.7);
-    float crackPattern3 = getCrackPattern(centeredUV * 0.8 - vec2(0.3, 0.5), time * 1.3);
+    // 12 THICK RADIAL CRACKS
+    float cracks = 0.0;
+    for(int i = 0; i < 12; i++) {
+      float rayAngle = float(i) * 0.523599; // 30 degrees
+      float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
+      // THICK visible rays
+      float ray = step(angleDiff, 0.15) * (1.0 - smoothstep(0.05, 0.5, radius));
+      cracks = max(cracks, ray);
+    }
 
-    // Combine crack patterns - MAXIMUM visibility
-    float cracks = max(crackPattern, max(crackPattern2 * 0.6, crackPattern3 * 0.4));
+    // Add noise-based cracks
+    float n = snoise3d(vec3(centeredUV * 10.0, time * 0.3));
+    cracks = max(cracks, step(0.3, abs(n)));
 
-    // Apply radial fade and ENSURE ALWAYS VISIBLE
-    cracks = cracks * radialFade * max(intensity, 0.8);
+    // ALWAYS VISIBLE - no intensity dependency
+    cracks = cracks * radialFade;
 
     // SUPER SCI-FI GLITCH EFFECTS
     float glitchTime = floor(time * 12.0);
@@ -366,15 +374,16 @@ const RealityCrackFragmentShader = `
     distortedColor.b = texture2D(tDiffuse, distortedUV - vec2(aberration, aberration * 0.5)).b;
 
     // OTHERWORLDLY PURPLE/BLUE GLOW from cracks (reality bleeding through)
-    float glowIntensity = cracks * 8.0 * pulse * max(intensity, 0.8);
+    // SUPER BRIGHT - no intensity dependency
+    float glowIntensity = cracks * 15.0 * pulse;
 
     // Purple/blue cosmic horror color - pulsing between shades
-    vec3 purpleBlue1 = vec3(0.4, 0.2, 0.9);  // Deep purple
-    vec3 purpleBlue2 = vec3(0.2, 0.5, 1.0);  // Electric blue
-    vec3 glowColor = mix(purpleBlue1, purpleBlue2, sin(time * 3.0 + cracks * 10.0) * 0.5 + 0.5);
+    vec3 purpleBlue1 = vec3(0.6, 0.3, 1.2);  // BRIGHT Deep purple
+    vec3 purpleBlue2 = vec3(0.3, 0.7, 1.5);  // BRIGHT Electric blue
+    vec3 glowColor = mix(purpleBlue1, purpleBlue2, sin(time * 3.0) * 0.5 + 0.5);
 
     // Add ethereal white-hot core to cracks
-    glowColor = mix(glowColor, vec3(1.2, 1.1, 1.3), smoothstep(0.8, 1.0, cracks) * fastPulse);
+    glowColor = mix(glowColor, vec3(1.5, 1.4, 1.6), cracks * fastPulse);
 
     vec3 ominousGlow = glowColor * glowIntensity;
 
