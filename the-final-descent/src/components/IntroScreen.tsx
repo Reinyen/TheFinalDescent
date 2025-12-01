@@ -259,8 +259,8 @@ const RealityCrackShader = {
       vec2 fromCenter = uv - craterCenter;
       float distFromCrater = length(fromCenter);
 
-      // Effect radius - prominent at center, fades out
-      float radialFade = smoothstep(0.45, 0.0, distFromCrater);
+      // Soft outer edge fade - gradual falloff instead of hard cutoff
+      float radialFade = smoothstep(0.55, 0.0, distFromCrater);
       radialFade = radialFade * intensity;
 
       if (radialFade < 0.001) {
@@ -283,10 +283,10 @@ const RealityCrackShader = {
       float allCracks = crackLine;
       allCracks = clamp(allCracks * 2.5, 0.0, 1.0);
 
-      // Per-shard separation and distortion
+      // Enhanced per-shard separation and distortion for visible warping
       vec2 cellId = floor(shardUV);
       float shardRotation = hash21(cellId) * 6.28318;
-      float shardSeparation = crackPhase * 0.02; // Fragments separate over time
+      float shardSeparation = crackPhase * 0.04; // Increased from 0.02 for more visible separation
 
       vec2 shardOffset = vec2(
         cos(shardRotation),
@@ -295,15 +295,15 @@ const RealityCrackShader = {
 
       vec2 distortedUV = uv + shardOffset;
 
-      // Enhanced chromatic aberration - increases near cracks
-      float aberrationStrength = radialFade * 0.008 * (1.0 + allCracks * 2.0);
+      // ENHANCED chromatic aberration - much more visible warping
+      float aberrationStrength = radialFade * 0.02 * (1.0 + allCracks * 3.0); // Increased from 0.008
       vec3 color;
       color.r = texture2D(tDiffuse, distortedUV + vec2(aberrationStrength, 0.0)).r;
       color.g = texture2D(tDiffuse, distortedUV).g;
       color.b = texture2D(tDiffuse, distortedUV - vec2(aberrationStrength, 0.0)).b;
 
-      // DARK CRACKS with bright hot edges (like fresh fractures)
-      float crackDarkness = allCracks * 0.95;
+      // SEMI-TRANSPARENT DARK CRACKS - reduced opacity for 50% glass effect
+      float crackDarkness = allCracks * 0.5; // Reduced from 0.95 to allow transparency
       color = mix(color, vec3(0.0), crackDarkness);
 
       // Bright white-hot edges on fresh cracks (fades over time)
@@ -336,7 +336,7 @@ const RealityCrackShader = {
       float luminance = dot(color, vec3(0.299, 0.587, 0.114));
       color = mix(color, vec3(luminance) * 0.75, desaturate);
 
-      // 50% opacity for entire glass effect
+      // 50% opacity for entire glass effect with smooth outer fade
       float finalAlpha = radialFade * 0.5;
 
       gl_FragColor = vec4(color, finalAlpha);
