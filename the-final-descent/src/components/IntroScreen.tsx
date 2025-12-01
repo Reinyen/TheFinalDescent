@@ -454,7 +454,12 @@ class SceneManager {
   meteorMesh: THREE.Mesh | null = null;
   meteorMaterial: THREE.ShaderMaterial | null = null;
   trailSystem: TrailParticleSystem;
+  explosionSystem: TrailParticleSystem;
   shardsMeshes: THREE.Mesh[] = [];
+  starfield: THREE.Points | null = null;
+  starOriginalPositions: Float32Array | null = null;
+  craterGlow: THREE.Mesh | null = null;
+  shockwaveRings: THREE.Mesh[] = [];
 
   clock: THREE.Clock;
   timeline: {
@@ -522,6 +527,9 @@ class SceneManager {
     this.trailSystem = new TrailParticleSystem(3000);
     this.scene.add(this.trailSystem.getMesh());
 
+    this.explosionSystem = new TrailParticleSystem(5000);
+    this.scene.add(this.explosionSystem.getMesh());
+
     this.clock = new THREE.Clock();
     this.timeline = {
       phase: 'intro',
@@ -558,6 +566,9 @@ class SceneManager {
       sizes[i] = Math.random() * 2 + 0.5;
     }
 
+    // Store original positions for gravitational pull effect
+    this.starOriginalPositions = new Float32Array(positions);
+
     starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     starGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     starGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
@@ -571,12 +582,13 @@ class SceneManager {
       blending: THREE.AdditiveBlending,
     });
 
-    const stars = new THREE.Points(starGeometry, starMaterial);
-    this.scene.add(stars);
+    this.starfield = new THREE.Points(starGeometry, starMaterial);
+    this.scene.add(this.starfield);
   }
 
   createMeteor() {
-    const geometry = new THREE.IcosahedronGeometry(2, 3);
+    // Reduced size by 40% (from 2 to 1.2)
+    const geometry = new THREE.IcosahedronGeometry(1.2, 3);
 
     this.meteorMaterial = new THREE.ShaderMaterial({
       uniforms: {
@@ -589,12 +601,14 @@ class SceneManager {
     });
 
     this.meteorMesh = new THREE.Mesh(geometry, this.meteorMaterial);
-    this.meteorMesh.position.set(0, 50, 0);
+    // Start position adjusted for 60-degree angle approach
+    this.meteorMesh.position.set(20, 80, -40);
+    this.meteorMesh.scale.set(0.1, 0.1, 0.1); // Start small
     this.meteorMesh.visible = false;
     this.scene.add(this.meteorMesh);
 
-    // Add meteor glow
-    const glowGeometry = new THREE.IcosahedronGeometry(3.5, 2);
+    // Add meteor glow (proportionally reduced)
+    const glowGeometry = new THREE.IcosahedronGeometry(2.1, 2);
     const glowMaterial = new THREE.MeshBasicMaterial({
       color: 0xff8844,
       transparent: true,
@@ -616,29 +630,75 @@ class SceneManager {
 
   createImpactEffects() {
     console.log('Creating impact effects');
-    // Impact will be handled by particle systems
+    const impactPoint = new THREE.Vector3(7, -15, 2);
+
+    // Massive explosion burst with debris
+    const debrisVelocity = new THREE.Vector3(0, 0, 0);
+    for (let i = 0; i < 360; i += 3) {
+      const angle = (i / 360) * Math.PI * 2;
+      const elevAngle = (Math.random() * 0.5 + 0.3) * Math.PI;
+      const speed = 15 + Math.random() * 25;
+
+      debrisVelocity.set(
+        Math.cos(angle) * Math.sin(elevAngle) * speed,
+        Math.cos(elevAngle) * speed,
+        Math.sin(angle) * Math.sin(elevAngle) * speed
+      );
+
+      // Mix of plasma, ember, and smoke for realistic explosion
+      this.explosionSystem.emit(impactPoint, debrisVelocity, 3, 'plasma');
+      this.explosionSystem.emit(impactPoint, debrisVelocity, 2, 'ember');
+      this.explosionSystem.emit(impactPoint, debrisVelocity, 1, 'smoke');
+    }
+
+    // Create expanding shockwave rings
+    for (let i = 0; i < 3; i++) {
+      const ringGeometry = new THREE.RingGeometry(0.1, 0.5, 64);
+      const ringMaterial = new THREE.MeshBasicMaterial({
+        color: i === 0 ? 0x8844ff : i === 1 ? 0x6633dd : 0x4422aa,
+        transparent: true,
+        opacity: 0.8,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      });
+      const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+      ring.position.copy(impactPoint);
+      ring.rotation.x = -Math.PI / 2;
+      ring.userData.startTime = this.timeline.time + i * 0.1;
+      ring.userData.initialScale = 0.1;
+      this.shockwaveRings.push(ring);
+      this.scene.add(ring);
+    }
+
+    // Create eerie purple/blue crater glow
+    const craterGeometry = new THREE.CircleGeometry(5, 64);
+    const craterMaterial = new THREE.MeshBasicMaterial({
+      color: 0x7744ff,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+    });
+    this.craterGlow = new THREE.Mesh(craterGeometry, craterMaterial);
+    this.craterGlow.position.copy(impactPoint);
+    this.craterGlow.rotation.x = -Math.PI / 2;
+    this.scene.add(this.craterGlow);
   }
 
   createShatteredGlass() {
     console.log('Creating shattered glass effect');
 
-    // Create render target for refraction
-    const renderTarget = new THREE.WebGLRenderTarget(
-      window.innerWidth,
-      window.innerHeight
-    );
-
-    // Generate Voronoi-like distribution
-    const shardCount = 30;
-    const craterCenter = new THREE.Vector2(0, -15);
+    // Generate shards around impact point (7, -15, 2)
+    const shardCount = 35;
+    const impactCenter = new THREE.Vector2(7, 2);
     const points: THREE.Vector2[] = [];
 
+    // Create layered distribution for more density
     for (let i = 0; i < shardCount; i++) {
-      const angle = (i / shardCount) * Math.PI * 2;
-      const distance = 3 + Math.random() * 4;
+      const angle = (i / shardCount) * Math.PI * 2 + Math.random() * 0.5;
+      const distance = 2 + Math.random() * 6;
       points.push(new THREE.Vector2(
-        craterCenter.x + Math.cos(angle) * distance,
-        craterCenter.y + Math.sin(angle) * distance
+        impactCenter.x + Math.cos(angle) * distance,
+        impactCenter.y + Math.sin(angle) * distance
       ));
     }
 
@@ -646,11 +706,11 @@ class SceneManager {
     points.forEach((point, i) => {
       const sides = 5 + Math.floor(Math.random() * 3);
       const shape = new THREE.Shape();
-      const size = 0.4 + Math.random() * 0.3;
+      const size = 0.6 + Math.random() * 0.5;
 
       for (let j = 0; j < sides; j++) {
-        const angle = (j / sides) * Math.PI * 2 + Math.random() * 0.3;
-        const r = size * (0.7 + Math.random() * 0.3);
+        const angle = (j / sides) * Math.PI * 2 + Math.random() * 0.4;
+        const r = size * (0.6 + Math.random() * 0.4);
         const x = Math.cos(angle) * r;
         const y = Math.sin(angle) * r;
 
@@ -665,17 +725,18 @@ class SceneManager {
           tDiffuse: { value: null },
           resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
           time: { value: 0 },
-          refractionStrength: { value: 1.0 },
+          refractionStrength: { value: 2.5 },
         },
         vertexShader: RefractionShardVertexShader,
         fragmentShader: RefractionShardFragmentShader,
         transparent: true,
         side: THREE.DoubleSide,
+        blending: THREE.NormalBlending,
       });
 
       const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.set(point.x, point.y, 0.1);
-      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(point.x, -15, point.y);
+      mesh.rotation.x = -Math.PI / 2 + (Math.random() - 0.5) * 0.3;
       mesh.rotation.z = Math.random() * Math.PI * 2;
       mesh.visible = false;
 
@@ -701,26 +762,67 @@ class SceneManager {
     // Meteor phase
     if (this.timeline.phase === 'meteor' && this.meteorMesh) {
       const elapsed = this.timeline.time - this.timeline.meteorStartTime;
+      const progress = Math.min(elapsed / 1.0, 1.0); // 1 second descent
 
-      // Animate meteor
-      this.meteorMesh.position.y = 50 - elapsed * 12;
-      this.meteorMesh.rotation.x += deltaTime * 0.5;
-      this.meteorMesh.rotation.y += deltaTime * 0.3;
+      // Animate meteor on 60-degree angle trajectory (starts far, falls toward viewer)
+      // Path: (20, 80, -40) → (7, -15, 2)
+      const startPos = new THREE.Vector3(20, 80, -40);
+      const endPos = new THREE.Vector3(7, -15, 2);
+
+      this.meteorMesh.position.lerpVectors(startPos, endPos, progress);
+      this.meteorMesh.rotation.x += deltaTime * 2.5;
+      this.meteorMesh.rotation.y += deltaTime * 1.8;
+
+      // Perspective scaling - starts small (0.1), grows to full size (1.0)
+      const scale = 0.1 + progress * 0.9;
+      this.meteorMesh.scale.set(scale, scale, scale);
 
       // Update meteor shader
       if (this.meteorMaterial) {
         this.meteorMaterial.uniforms.time.value = this.timeline.time;
-        this.meteorMaterial.uniforms.heatIntensity.value = 1.0;
+        this.meteorMaterial.uniforms.heatIntensity.value = 1.0 + progress * 0.5;
       }
 
-      // Emit trail particles
-      const velocity = new THREE.Vector3(0, -12, 0);
-      this.trailSystem.emit(this.meteorMesh.position, velocity, 5, 'plasma');
-      this.trailSystem.emit(this.meteorMesh.position, velocity, 3, 'ember');
-      this.trailSystem.emit(this.meteorMesh.position, velocity, 2, 'smoke');
+      // Emit trail particles - much denser trail
+      const velocity = endPos.clone().sub(startPos).normalize().multiplyScalar(50);
+      this.trailSystem.emit(this.meteorMesh.position, velocity, 15, 'plasma');
+      this.trailSystem.emit(this.meteorMesh.position, velocity, 10, 'ember');
+      this.trailSystem.emit(this.meteorMesh.position, velocity, 8, 'smoke');
 
-      // Impact detection
-      if (this.meteorMesh.position.y < -12) {
+      // Gravitational star pull effect
+      if (this.starfield && this.starOriginalPositions) {
+        const positions = this.starfield.geometry.attributes.position.array as Float32Array;
+        const meteorPos = this.meteorMesh.position;
+        const pullStrength = 0.3 * progress;
+
+        for (let i = 0; i < positions.length; i += 3) {
+          const origX = this.starOriginalPositions[i];
+          const origY = this.starOriginalPositions[i + 1];
+          const origZ = this.starOriginalPositions[i + 2];
+
+          const dx = meteorPos.x - origX;
+          const dy = meteorPos.y - origY;
+          const dz = meteorPos.z - origZ;
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+          // Only pull stars within reasonable distance
+          if (dist < 50) {
+            const pullFactor = (1 - dist / 50) * pullStrength;
+            positions[i] = origX + dx * pullFactor;
+            positions[i + 1] = origY + dy * pullFactor;
+            positions[i + 2] = origZ + dz * pullFactor;
+          } else {
+            positions[i] = origX;
+            positions[i + 1] = origY;
+            positions[i + 2] = origZ;
+          }
+        }
+
+        this.starfield.geometry.attributes.position.needsUpdate = true;
+      }
+
+      // Impact detection - when meteor reaches ground
+      if (this.meteorMesh.position.y <= -15 || progress >= 1.0) {
         this.timeline.phase = 'impact';
         this.timeline.impactTime = this.timeline.time;
         this.meteorMesh.visible = false;
@@ -728,14 +830,14 @@ class SceneManager {
         this.createShatteredGlass();
 
         // Camera shake
-        this.camera.position.x = Math.random() * 0.5 - 0.25;
-        this.camera.position.y = Math.random() * 0.3 - 0.15;
+        this.camera.position.x = Math.random() * 0.8 - 0.4;
+        this.camera.position.y = Math.random() * 0.5 - 0.25;
 
         // Chromatic aberration spike
-        this.chromaPass.uniforms['amount'].value = 0.004;
+        this.chromaPass.uniforms['amount'].value = 0.006;
 
         // Bloom spike
-        this.bloomPass.strength = 3.0;
+        this.bloomPass.strength = 3.5;
 
         if (this.onImpact) {
           this.onImpact();
@@ -748,30 +850,76 @@ class SceneManager {
       const impactElapsed = this.timeline.time - this.timeline.impactTime;
 
       // Camera shake decay
-      const shakeIntensity = Math.max(0, 0.5 - impactElapsed);
+      const shakeIntensity = Math.max(0, 0.8 - impactElapsed);
       this.camera.position.x = (Math.random() - 0.5) * shakeIntensity;
       this.camera.position.y = (Math.random() - 0.5) * shakeIntensity * 0.6;
 
       // Chromatic aberration decay
-      this.chromaPass.uniforms['amount'].value = Math.max(0, 0.004 - impactElapsed * 0.003);
+      this.chromaPass.uniforms['amount'].value = Math.max(0, 0.006 - impactElapsed * 0.004);
 
       // Bloom decay
-      this.bloomPass.strength = Math.max(1.5, 3.0 - impactElapsed * 1.5);
+      this.bloomPass.strength = Math.max(1.5, 3.5 - impactElapsed * 2.0);
 
-      // Show shards
-      if (impactElapsed > 0.2) {
+      // Animate shockwave rings
+      this.shockwaveRings.forEach((ring) => {
+        const ringElapsed = this.timeline.time - ring.userData.startTime;
+        if (ringElapsed > 0) {
+          const ringProgress = Math.min(ringElapsed / 1.2, 1.0);
+          const scale = 0.1 + ringProgress * 30;
+          ring.scale.set(scale, scale, 1);
+
+          const material = ring.material as THREE.MeshBasicMaterial;
+          material.opacity = Math.max(0, 0.8 - ringProgress * 0.8);
+        }
+      });
+
+      // Crater glow fade in
+      if (this.craterGlow) {
+        const glowProgress = Math.min(impactElapsed / 0.8, 1.0);
+        const material = this.craterGlow.material as THREE.MeshBasicMaterial;
+        material.opacity = glowProgress * 0.6;
+
+        // Pulsing glow effect
+        const pulse = Math.sin(this.timeline.time * 3) * 0.1 + 0.9;
+        this.craterGlow.scale.set(pulse, pulse, 1);
+      }
+
+      // Show shards with staggered timing
+      if (impactElapsed > 0.15) {
         this.shardsMeshes.forEach((shard, i) => {
-          shard.visible = true;
+          const shardDelay = i * 0.01;
+          if (impactElapsed > 0.15 + shardDelay) {
+            shard.visible = true;
+
+            // Subtle animation - shards slowly float up
+            const shardElapsed = impactElapsed - (0.15 + shardDelay);
+            shard.position.y = -15 + shardElapsed * 0.3;
+            shard.rotation.z += deltaTime * 0.5;
+          }
         });
       }
 
-      if (impactElapsed > 1.0) {
+      if (impactElapsed > 1.5) {
         this.timeline.phase = 'crater';
+      }
+    }
+
+    // Crater phase - maintain the eerie glow
+    if (this.timeline.phase === 'crater') {
+      if (this.craterGlow) {
+        const pulse = Math.sin(this.timeline.time * 2) * 0.15 + 0.85;
+        this.craterGlow.scale.set(pulse, pulse, 1);
+
+        // Cycle through purple/blue hues
+        const hueShift = Math.sin(this.timeline.time * 0.5) * 0.2;
+        const material = this.craterGlow.material as THREE.MeshBasicMaterial;
+        material.color.setHSL(0.7 + hueShift, 0.9, 0.5);
       }
     }
 
     // Update particles
     this.trailSystem.update(deltaTime);
+    this.explosionSystem.update(deltaTime);
 
     // Render
     this.composer.render();
