@@ -275,31 +275,13 @@ const RealityCrackShader = {
       float cellDist1 = voronoiData.x;
       float cellDist2 = voronoiData.y;
 
-      // Create sharper crack lines using edge distance
+      // Create sharper crack lines using edge distance - ONLY Voronoi cracks
       float edgeDist = cellDist2 - cellDist1;
       float crackLine = smoothstep(0.08, 0.0, edgeDist);
 
-      // RADIAL IMPACT CRACKS with animated expansion
-      float angle = atan(fromCenter.y, fromCenter.x);
-      float radius = distFromCrater;
-
-      // More cracks (32 rays) with animated growth
-      float radialCracks = 0.0;
-      for(int i = 0; i < 32; i++) {
-        float rayAngle = float(i) * 0.19635; // ~11.25 degrees
-        float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
-
-        // Cracks expand outward over time
-        float crackGrowth = smoothstep(0.0, 0.4, crackPhase);
-        float maxRadius = 0.4 * crackGrowth;
-
-        float ray = smoothstep(0.1, 0.0, angleDiff) * (1.0 - smoothstep(0.0, maxRadius, radius));
-        radialCracks = max(radialCracks, ray);
-      }
-
-      // Combine all cracks
-      float allCracks = max(crackLine, radialCracks);
-      allCracks = clamp(allCracks * 2.0, 0.0, 1.0);
+      // All cracks come from Voronoi cells only (no radial burst lines)
+      float allCracks = crackLine;
+      allCracks = clamp(allCracks * 2.5, 0.0, 1.0);
 
       // Per-shard separation and distortion
       vec2 cellId = floor(shardUV);
@@ -339,16 +321,25 @@ const RealityCrackShader = {
       );
       color += glowColor * crackEdge * radialFade * 0.15 * crackPhase;
 
-      // Refraction-like shimmer on glass surfaces
+      // Reflective/shiny glass surfaces - both shimmer and bright edge reflections
       float shimmer = sin(time * 3.0 + hash21(cellId) * 6.28) * 0.5 + 0.5;
-      color += vec3(0.2, 0.25, 0.3) * shimmer * radialFade * 0.05 * (1.0 - allCracks);
+      color += vec3(0.2, 0.25, 0.3) * shimmer * radialFade * 0.08 * (1.0 - allCracks);
+
+      // Mirror-like reflections on shard edges - bright white highlights
+      float edgeProximity = smoothstep(0.15, 0.05, edgeDist);
+      vec3 reflectionColor = vec3(1.0, 1.0, 1.0); // Bright white reflection
+      float reflectionStrength = edgeProximity * (1.0 - allCracks) * radialFade;
+      color += reflectionColor * reflectionStrength * 0.4;
 
       // Desaturation and darkening of shattered area
       float desaturate = radialFade * 0.3;
       float luminance = dot(color, vec3(0.299, 0.587, 0.114));
       color = mix(color, vec3(luminance) * 0.75, desaturate);
 
-      gl_FragColor = vec4(color, 1.0);
+      // 50% opacity for entire glass effect
+      float finalAlpha = radialFade * 0.5;
+
+      gl_FragColor = vec4(color, finalAlpha);
     }
   `
 };
@@ -1348,6 +1339,8 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
   const sceneManagerRef = useRef<SceneManager | null>(null);
   const [showTitle, setShowTitle] = useState(false);
   const [showButton, setShowButton] = useState(false);
+  const [titleGlitch, setTitleGlitch] = useState(false);
+  const [buttonGlitch, setButtonGlitch] = useState(false);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -1371,6 +1364,44 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
     };
   }, []);
 
+  // Occasional glitching for title
+  useEffect(() => {
+    if (!showTitle) return;
+
+    const scheduleNextGlitch = () => {
+      const delay = 3000 + Math.random() * 4000; // 3-7 seconds
+      return setTimeout(() => {
+        setTitleGlitch(true);
+        setTimeout(() => {
+          setTitleGlitch(false);
+          scheduleNextGlitch();
+        }, 150); // 150ms flicker
+      }, delay);
+    };
+
+    const timeoutId = scheduleNextGlitch();
+    return () => clearTimeout(timeoutId);
+  }, [showTitle]);
+
+  // Occasional glitching for button
+  useEffect(() => {
+    if (!showButton) return;
+
+    const scheduleNextGlitch = () => {
+      const delay = 3000 + Math.random() * 4000; // 3-7 seconds
+      return setTimeout(() => {
+        setButtonGlitch(true);
+        setTimeout(() => {
+          setButtonGlitch(false);
+          scheduleNextGlitch();
+        }, 150); // 150ms flicker
+      }, delay);
+    };
+
+    const timeoutId = scheduleNextGlitch();
+    return () => clearTimeout(timeoutId);
+  }, [showButton]);
+
   return (
     <div className="fixed inset-0 w-full h-full overflow-hidden bg-black">
       <canvas ref={canvasRef} className="absolute inset-0" style={{ display: 'block' }} />
@@ -1381,7 +1412,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           className="absolute inset-0 flex items-center justify-center pointer-events-none"
           style={{
             top: '30%',
-            animation: 'glitchIn 0.6s ease-out both',
+            animation: titleGlitch ? 'quickGlitch 0.15s ease-in-out' : 'glitchIn 0.6s ease-out both',
           }}
         >
           <h1
@@ -1409,7 +1440,7 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           style={{
             top: '66%',
             transform: 'translateX(-50%)',
-            animation: 'glitchIn 0.5s ease-out 0.1s both',
+            animation: buttonGlitch ? 'quickGlitch 0.15s ease-in-out' : 'glitchIn 0.5s ease-out 0.1s both',
           }}
         >
           <button
@@ -1475,6 +1506,29 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
             transform: translateY(0) translateX(0) scale(1);
             filter: blur(0px);
             clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+          }
+        }
+
+        @keyframes quickGlitch {
+          0%, 100% {
+            opacity: 1;
+            transform: translateX(0);
+            filter: blur(0px);
+          }
+          25% {
+            opacity: 0.3;
+            transform: translateX(-8px);
+            filter: blur(3px);
+          }
+          50% {
+            opacity: 0;
+            transform: translateX(8px) translateY(3px);
+            filter: blur(5px);
+          }
+          75% {
+            opacity: 0.4;
+            transform: translateX(-5px);
+            filter: blur(2px);
           }
         }
 
