@@ -455,10 +455,13 @@ class SceneManager {
   crackPass: ShaderPass;
 
   starfield: THREE.Points | null = null;
+  starOriginalPositions: Float32Array | null = null;
   comet: THREE.Mesh | null = null;
   cometMaterial: THREE.ShaderMaterial | null = null;
   particles: ParticleSystem;
   craterGlow: THREE.Mesh | null = null;
+  blackHolePosition: THREE.Vector3 = new THREE.Vector3(0, -8, 10);
+  starsPulledIn: Set<number> = new Set();
 
   clock: THREE.Clock;
   timeline: {
@@ -567,6 +570,9 @@ class SceneManager {
       sizes[i] = Math.random() * 1.5 + 0.5; // 0.5 to 2.0
     }
 
+    // Store original positions for black hole pulling effect
+    this.starOriginalPositions = new Float32Array(positions);
+
     starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     starGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     starGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
@@ -619,19 +625,84 @@ class SceneManager {
   }
 
   createCraterGlow() {
-    const geometry = new THREE.CircleGeometry(15, 64);
-    const material = new THREE.MeshBasicMaterial({
-      color: 0x6633ff,
+    const impactPoint = new THREE.Vector3(0, -8, 10);
+
+    // BLACK HOLE - Dark center with subtle accretion disk
+    const blackHoleGeometry = new THREE.RingGeometry(0.5, 12, 64);
+    const blackHoleMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        innerRadius: { value: 0.5 },
+        outerRadius: { value: 12.0 },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vPosition;
+        void main() {
+          vUv = uv;
+          vPosition = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        uniform float innerRadius;
+        uniform float outerRadius;
+        varying vec2 vUv;
+        varying vec3 vPosition;
+
+        void main() {
+          vec2 center = vec2(0.5, 0.5);
+          float dist = length(vUv - center) * 24.0; // Scale to ring size
+
+          // Event horizon - pure black center
+          if (dist < innerRadius) {
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+          }
+
+          // Accretion disk - subtle purple/teal glow
+          float diskFade = smoothstep(outerRadius, innerRadius, dist);
+          float angle = atan(vUv.y - 0.5, vUv.x - 0.5);
+
+          // Rotating spiral pattern
+          float spiral = sin(angle * 3.0 - dist * 0.5 + time * 2.0) * 0.5 + 0.5;
+
+          // Color mixing - purple to teal
+          vec3 purple = vec3(0.4, 0.1, 0.6);
+          vec3 teal = vec3(0.1, 0.5, 0.5);
+          vec3 color = mix(purple, teal, spiral);
+
+          // Fade out toward edges
+          float alpha = diskFade * 0.4;
+
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
       transparent: true,
-      opacity: 0,
       blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
     });
 
-    this.craterGlow = new THREE.Mesh(geometry, material);
-    // 2/3 down screen in 3D space
-    this.craterGlow.position.set(0, -8, 10);
+    this.craterGlow = new THREE.Mesh(blackHoleGeometry, blackHoleMaterial);
+    this.craterGlow.position.copy(impactPoint);
     this.craterGlow.rotation.x = -Math.PI / 2;
     this.scene.add(this.craterGlow);
+
+    // Dark core - absorbs light
+    const coreGeometry = new THREE.CircleGeometry(2, 32);
+    const coreMaterial = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.95,
+    });
+    const core = new THREE.Mesh(coreGeometry, coreMaterial);
+    core.position.copy(impactPoint);
+    core.position.y += 0.1; // Slightly above to layer properly
+    core.rotation.x = -Math.PI / 2;
+    this.scene.add(core);
+    this.craterGlow.userData.core = core;
   }
 
   update() {
@@ -749,19 +820,23 @@ class SceneManager {
       // Bloom decay
       this.bloomPass.strength = Math.max(2.0, 6.0 - elapsed * 4.0);
 
-      // Crater glow fade in
+      // Black hole - rotate and update
       if (this.craterGlow) {
-        const material = this.craterGlow.material as THREE.MeshBasicMaterial;
-        material.opacity = fadeProgress * 0.8;
+        const material = this.craterGlow.material as THREE.ShaderMaterial;
+        material.uniforms.time.value = t;
+        material.opacity = fadeProgress;
 
-        // Pulsing
-        const pulse = Math.sin(t * 4.0) * 0.2 + 0.9;
-        this.craterGlow.scale.set(pulse, pulse, 1);
+        // Rotate black hole
+        this.craterGlow.rotation.z += deltaTime * 0.5;
 
-        // Color shift - purple → teal → green
-        const hue = 0.7 + Math.sin(t * 2.0) * 0.2;
-        material.color.setHSL(hue, 1.0, 0.55);
+        // Rotate dark core
+        if (this.craterGlow.userData.core) {
+          this.craterGlow.userData.core.rotation.z -= deltaTime * 0.3;
+        }
       }
+
+      // Pull stars into black hole
+      this.pullStarsIntoBlackHole(deltaTime);
 
       // Reality crack effect fade in - FULL intensity
       this.crackPass.uniforms['intensity'].value = fadeProgress;
@@ -782,15 +857,20 @@ class SceneManager {
     else if (this.timeline.phase === 'button_reveal') {
       const elapsed = t - 5.5;
 
-      // Continue crater effects
+      // Continue black hole rotation
       if (this.craterGlow) {
-        const pulse = Math.sin(t * 4.0) * 0.2 + 0.9;
-        this.craterGlow.scale.set(pulse, pulse, 1);
+        const material = this.craterGlow.material as THREE.ShaderMaterial;
+        material.uniforms.time.value = t;
 
-        const material = this.craterGlow.material as THREE.MeshBasicMaterial;
-        const hue = 0.7 + Math.sin(t * 2.0) * 0.2;
-        material.color.setHSL(hue, 1.0, 0.55);
+        this.craterGlow.rotation.z += deltaTime * 0.5;
+
+        if (this.craterGlow.userData.core) {
+          this.craterGlow.userData.core.rotation.z -= deltaTime * 0.3;
+        }
       }
+
+      // Continue pulling stars
+      this.pullStarsIntoBlackHole(deltaTime);
 
       this.crackPass.uniforms['time'].value = t;
 
@@ -805,16 +885,21 @@ class SceneManager {
       }
     }
 
-    // PHASE 6: COMPLETE - maintain crater effects indefinitely
+    // PHASE 6: COMPLETE - maintain black hole effects indefinitely
     else if (this.timeline.phase === 'complete') {
       if (this.craterGlow) {
-        const pulse = Math.sin(t * 4.0) * 0.2 + 0.9;
-        this.craterGlow.scale.set(pulse, pulse, 1);
+        const material = this.craterGlow.material as THREE.ShaderMaterial;
+        material.uniforms.time.value = t;
 
-        const material = this.craterGlow.material as THREE.MeshBasicMaterial;
-        const hue = 0.7 + Math.sin(t * 2.0) * 0.2;
-        material.color.setHSL(hue, 1.0, 0.55);
+        this.craterGlow.rotation.z += deltaTime * 0.5;
+
+        if (this.craterGlow.userData.core) {
+          this.craterGlow.userData.core.rotation.z -= deltaTime * 0.3;
+        }
       }
+
+      // Continue pulling stars
+      this.pullStarsIntoBlackHole(deltaTime);
 
       this.crackPass.uniforms['time'].value = t;
     }
@@ -824,6 +909,62 @@ class SceneManager {
 
     // Render
     this.composer.render();
+  }
+
+  pullStarsIntoBlackHole(deltaTime: number) {
+    if (!this.starfield || !this.starOriginalPositions) return;
+
+    const positions = this.starfield.geometry.attributes.position.array as Float32Array;
+    const sizes = this.starfield.geometry.attributes.size.array as Float32Array;
+    const starCount = positions.length / 3;
+
+    // Select a few nearby stars to pull in (only once)
+    if (this.starsPulledIn.size === 0) {
+      for (let i = 0; i < starCount; i++) {
+        const x = positions[i * 3];
+        const y = positions[i * 3 + 1];
+        const z = positions[i * 3 + 2];
+
+        const dx = x - this.blackHolePosition.x;
+        const dy = y - this.blackHolePosition.y;
+        const dz = z - this.blackHolePosition.z;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        // Select stars within range (about 5-10% of nearby stars)
+        if (dist < 30 && Math.random() < 0.08) {
+          this.starsPulledIn.add(i);
+        }
+      }
+    }
+
+    // Pull selected stars toward black hole
+    this.starsPulledIn.forEach((starIndex) => {
+      const i = starIndex * 3;
+
+      const x = positions[i];
+      const y = positions[i + 1];
+      const z = positions[i + 2];
+
+      const dx = this.blackHolePosition.x - x;
+      const dy = this.blackHolePosition.y - y;
+      const dz = this.blackHolePosition.z - z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      // Gravitational pull - stronger as star gets closer
+      const pullStrength = deltaTime * 15 / (dist * 0.5 + 1);
+
+      positions[i] += dx * pullStrength;
+      positions[i + 1] += dy * pullStrength;
+      positions[i + 2] += dz * pullStrength;
+
+      // Fade out and shrink star as it gets absorbed
+      if (dist < 3) {
+        sizes[starIndex] *= 0.95;
+      }
+    });
+
+    this.starfield.geometry.attributes.position.needsUpdate = true;
+    this.starfield.geometry.attributes.size.needsUpdate = true;
   }
 
   createImpact() {
@@ -913,7 +1054,9 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
           <h1
             className="text-8xl font-bold text-white tracking-widest select-none glitch-text"
             style={{
-              fontFamily: "'Rubik Burned', cursive",
+              fontFamily: "'Rajdhani', 'Arial', sans-serif",
+              fontWeight: 700,
+              letterSpacing: '0.25em',
               textShadow: `
                 2px 0 0 rgba(255, 0, 255, 0.7),
                 -2px 0 0 rgba(0, 255, 255, 0.7),
@@ -940,8 +1083,10 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
             onClick={onBegin}
             className="cursor-pointer transition-all duration-200 hover:scale-110 glitch-text"
             style={{
-              fontFamily: "'Rubik Marker Hatch', cursive",
-              fontSize: '2rem',
+              fontFamily: "'Rajdhani', 'Arial', sans-serif",
+              fontWeight: 600,
+              fontSize: '1rem', // 50% smaller (was 2rem)
+              letterSpacing: '0.2em',
               color: 'white',
               background: 'transparent',
               border: 'none',
@@ -959,6 +1104,8 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
       )}
 
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&display=swap');
+
         @keyframes glitchIn {
           0% {
             opacity: 0;
