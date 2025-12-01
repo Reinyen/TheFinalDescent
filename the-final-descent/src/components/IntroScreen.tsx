@@ -254,8 +254,8 @@ const RealityCrackShader = {
       vec2 fromCenter = uv - craterCenter;
       float distFromCrater = length(fromCenter);
 
-      // Effect radius - very visible at center, fades out
-      float radialFade = smoothstep(0.4, 0.0, distFromCrater);
+      // Effect radius - prominent at center, fades out
+      float radialFade = smoothstep(0.45, 0.0, distFromCrater);
       radialFade = radialFade * intensity;
 
       if (radialFade < 0.001) {
@@ -264,67 +264,74 @@ const RealityCrackShader = {
       }
 
       // Create glass shards using Voronoi cells
-      float shardScale = 15.0; // Size of glass fragments
+      float shardScale = 20.0; // Smaller shards for more glass-like appearance
       vec2 shardUV = (uv - craterCenter) * shardScale;
       vec3 voronoiData = voronoi(shardUV);
       float cellDist = voronoiData.x;
 
-      // VISIBLE CRACK LINES - dark boundaries between shards
-      float crackWidth = 0.02;
-      float crackLine = smoothstep(crackWidth, 0.0, cellDist);
+      // THICK DARK CRACK LINES between shards
+      float crackWidth = 0.06; // Much thicker
+      float crackLine = smoothstep(crackWidth, 0.0, sqrt(cellDist));
+      crackLine = pow(crackLine, 0.5); // Make edges sharper
 
-      // RADIAL IMPACT CRACKS - main fracture rays from impact
+      // RADIAL IMPACT CRACKS - THICK and DARK
       float angle = atan(fromCenter.y, fromCenter.x);
       float radius = distFromCrater;
 
       float radialCracks = 0.0;
-      for(int i = 0; i < 20; i++) {
-        float rayAngle = float(i) * 0.314159; // ~18 degrees
+      // 24 rays for dense crack pattern
+      for(int i = 0; i < 24; i++) {
+        float rayAngle = float(i) * 0.2617994; // 15 degrees
         float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
-        float ray = smoothstep(0.08, 0.0, angleDiff) * (1.0 - smoothstep(0.0, 0.35, radius));
+        // THICK rays
+        float ray = smoothstep(0.12, 0.0, angleDiff) * (1.0 - smoothstep(0.0, 0.4, radius));
         radialCracks = max(radialCracks, ray);
       }
 
-      // Combine Voronoi cracks with radial cracks
+      // Combine all cracks - emphasize them
       float allCracks = max(crackLine, radialCracks);
+      allCracks = min(allCracks * 1.8, 1.0); // Boost crack visibility
 
-      // Each glass shard has its own distortion
-      vec2 cellCenter = hash22(floor(shardUV));
-      float shardRotation = hash21(floor(shardUV)) * 6.28318;
+      // Subtle per-shard distortion
+      vec2 cellId = floor(shardUV);
+      vec2 cellCenter = hash22(cellId);
+      float shardRotation = hash21(cellId) * 6.28318;
 
-      // Rotate and offset each shard slightly
       vec2 shardOffset = vec2(
         cos(shardRotation),
         sin(shardRotation)
-      ) * allCracks * radialFade * 0.015;
+      ) * cellDist * radialFade * 0.01;
 
-      // Apply shard-specific distortion
       vec2 distortedUV = uv + shardOffset;
 
-      // Add per-shard chromatic aberration
-      float shardAberration = radialFade * 0.008;
+      // Sample scene with subtle chromatic aberration
+      float aberration = radialFade * 0.004;
       vec3 color;
-      color.r = texture2D(tDiffuse, distortedUV + vec2(shardAberration, 0.0)).r;
+      color.r = texture2D(tDiffuse, distortedUV + vec2(aberration, 0.0)).r;
       color.g = texture2D(tDiffuse, distortedUV).g;
-      color.b = texture2D(tDiffuse, distortedUV - vec2(shardAberration, 0.0)).b;
+      color.b = texture2D(tDiffuse, distortedUV - vec2(aberration, 0.0)).b;
 
-      // DARK crack lines for realistic glass appearance
-      vec3 crackColor = vec3(0.0, 0.0, 0.0); // Black cracks
-      color = mix(color, crackColor, allCracks * 0.8);
+      // DARK CRACKS - make them VERY visible
+      // Pure black cracks with strong alpha
+      float crackDarkness = allCracks * 0.95; // Almost completely black
+      color = mix(color, vec3(0.0, 0.0, 0.0), crackDarkness);
 
-      // Subtle glow ONLY along crack edges (cosmic horror touch)
+      // MINIMAL glow - only thin edge along cracks
       vec3 glowColor = mix(
-        vec3(0.6, 0.2, 0.8),  // Purple
-        vec3(0.2, 0.8, 0.7),  // Teal
+        vec3(0.4, 0.15, 0.5),  // Dark purple
+        vec3(0.15, 0.5, 0.45), // Dark teal
         sin(time * 2.0) * 0.5 + 0.5
       );
 
-      // Glow only on crack edges, not everywhere
-      float edgeGlow = allCracks * (1.0 - allCracks) * 4.0; // Peaks at crack edges
-      color += glowColor * edgeGlow * radialFade * 0.5;
+      // Very subtle edge glow - barely noticeable
+      float crackEdge = allCracks * (1.0 - allCracks) * 8.0;
+      crackEdge = smoothstep(0.3, 0.7, crackEdge);
+      color += glowColor * crackEdge * radialFade * 0.15;
 
-      // Darken/desaturate shattered area slightly
-      color = mix(color, color * 0.85, radialFade * 0.3);
+      // Slight darkening/desaturation of shattered area
+      float desaturate = radialFade * 0.25;
+      float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+      color = mix(color, vec3(luminance) * 0.8, desaturate);
 
       gl_FragColor = vec4(color, 1.0);
     }
