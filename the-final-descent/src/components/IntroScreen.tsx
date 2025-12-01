@@ -186,14 +186,15 @@ const ParticleFragmentShader = `
   }
 `;
 
-// Reality Crack Shader - Full screen post-processing
+// Reality Crack Shader - Enhanced Voronoi-based glass shatter effect
 const RealityCrackShader = {
   uniforms: {
     'tDiffuse': { value: null },
     'resolution': { value: new THREE.Vector2() },
     'time': { value: 0.0 },
     'intensity': { value: 0.0 },
-    'craterCenter': { value: new THREE.Vector2(0.5, 0.67) }, // 2/3 down screen
+    'crackPhase': { value: 0.0 }, // 0-1: crack expansion animation
+    'craterCenter': { value: new THREE.Vector2(0.5, 0.67) },
   },
   vertexShader: `
     varying vec2 vUv;
@@ -207,13 +208,13 @@ const RealityCrackShader = {
     uniform vec2 resolution;
     uniform float time;
     uniform float intensity;
+    uniform float crackPhase;
     uniform vec2 craterCenter;
 
     varying vec2 vUv;
 
     float hash(float n) { return fract(sin(n) * 43758.5453123); }
 
-    // Hash functions for randomness
     float hash21(vec2 p) {
       return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
     }
@@ -223,13 +224,14 @@ const RealityCrackShader = {
       return fract(sin(p) * 43758.5453123);
     }
 
-    // Voronoi cell calculation - creates glass shard boundaries
+    // Enhanced Voronoi with distance to edge
     vec3 voronoi(vec2 x) {
       vec2 n = floor(x);
       vec2 f = fract(x);
 
-      vec2 mg, mr;
-      float md = 8.0;
+      float minDist1 = 8.0;
+      float minDist2 = 8.0;
+      vec2 minPoint = vec2(0.0);
 
       for(int j = -1; j <= 1; j++) {
         for(int i = -1; i <= 1; i++) {
@@ -238,15 +240,18 @@ const RealityCrackShader = {
           vec2 r = g + o - f;
           float d = dot(r, r);
 
-          if(d < md) {
-            md = d;
-            mr = r;
-            mg = g;
+          if(d < minDist1) {
+            minDist2 = minDist1;
+            minDist1 = d;
+            minPoint = r;
+          } else if(d < minDist2) {
+            minDist2 = d;
           }
         }
       }
 
-      return vec3(md, mr);
+      // Return: closest distance, second closest (for edges), cell center
+      return vec3(minDist1, minDist2, 0.0);
     }
 
     void main() {
@@ -263,75 +268,85 @@ const RealityCrackShader = {
         return;
       }
 
-      // Create glass shards using Voronoi cells
-      float shardScale = 20.0; // Smaller shards for more glass-like appearance
+      // Create glass shards using Voronoi cells - more fragments for realism
+      float shardScale = 25.0 + sin(time * 0.5) * 2.0; // Subtle variation
       vec2 shardUV = (uv - craterCenter) * shardScale;
       vec3 voronoiData = voronoi(shardUV);
-      float cellDist = voronoiData.x;
+      float cellDist1 = voronoiData.x;
+      float cellDist2 = voronoiData.y;
 
-      // THICK DARK CRACK LINES between shards
-      float crackWidth = 0.06; // Much thicker
-      float crackLine = smoothstep(crackWidth, 0.0, sqrt(cellDist));
-      crackLine = pow(crackLine, 0.5); // Make edges sharper
+      // Create sharper crack lines using edge distance
+      float edgeDist = cellDist2 - cellDist1;
+      float crackLine = smoothstep(0.08, 0.0, edgeDist);
 
-      // RADIAL IMPACT CRACKS - THICK and DARK
+      // RADIAL IMPACT CRACKS with animated expansion
       float angle = atan(fromCenter.y, fromCenter.x);
       float radius = distFromCrater;
 
+      // More cracks (32 rays) with animated growth
       float radialCracks = 0.0;
-      // 24 rays for dense crack pattern
-      for(int i = 0; i < 24; i++) {
-        float rayAngle = float(i) * 0.2617994; // 15 degrees
+      for(int i = 0; i < 32; i++) {
+        float rayAngle = float(i) * 0.19635; // ~11.25 degrees
         float angleDiff = abs(mod(angle - rayAngle + 3.14159, 6.28318) - 3.14159);
-        // THICK rays
-        float ray = smoothstep(0.12, 0.0, angleDiff) * (1.0 - smoothstep(0.0, 0.4, radius));
+
+        // Cracks expand outward over time
+        float crackGrowth = smoothstep(0.0, 0.4, crackPhase);
+        float maxRadius = 0.4 * crackGrowth;
+
+        float ray = smoothstep(0.1, 0.0, angleDiff) * (1.0 - smoothstep(0.0, maxRadius, radius));
         radialCracks = max(radialCracks, ray);
       }
 
-      // Combine all cracks - emphasize them
+      // Combine all cracks
       float allCracks = max(crackLine, radialCracks);
-      allCracks = min(allCracks * 1.8, 1.0); // Boost crack visibility
+      allCracks = clamp(allCracks * 2.0, 0.0, 1.0);
 
-      // Subtle per-shard distortion
+      // Per-shard separation and distortion
       vec2 cellId = floor(shardUV);
-      vec2 cellCenter = hash22(cellId);
       float shardRotation = hash21(cellId) * 6.28318;
+      float shardSeparation = crackPhase * 0.02; // Fragments separate over time
 
       vec2 shardOffset = vec2(
         cos(shardRotation),
         sin(shardRotation)
-      ) * cellDist * radialFade * 0.01;
+      ) * sqrt(cellDist1) * shardSeparation * radialFade;
 
       vec2 distortedUV = uv + shardOffset;
 
-      // Sample scene with subtle chromatic aberration
-      float aberration = radialFade * 0.004;
+      // Enhanced chromatic aberration - increases near cracks
+      float aberrationStrength = radialFade * 0.008 * (1.0 + allCracks * 2.0);
       vec3 color;
-      color.r = texture2D(tDiffuse, distortedUV + vec2(aberration, 0.0)).r;
+      color.r = texture2D(tDiffuse, distortedUV + vec2(aberrationStrength, 0.0)).r;
       color.g = texture2D(tDiffuse, distortedUV).g;
-      color.b = texture2D(tDiffuse, distortedUV - vec2(aberration, 0.0)).b;
+      color.b = texture2D(tDiffuse, distortedUV - vec2(aberrationStrength, 0.0)).b;
 
-      // DARK CRACKS - make them VERY visible
-      // Pure black cracks with strong alpha
-      float crackDarkness = allCracks * 0.95; // Almost completely black
-      color = mix(color, vec3(0.0, 0.0, 0.0), crackDarkness);
+      // DARK CRACKS with bright hot edges (like fresh fractures)
+      float crackDarkness = allCracks * 0.95;
+      color = mix(color, vec3(0.0), crackDarkness);
 
-      // MINIMAL glow - only thin edge along cracks
+      // Bright white-hot edges on fresh cracks (fades over time)
+      float freshness = 1.0 - crackPhase;
+      vec3 hotEdgeColor = vec3(2.0, 1.8, 1.5); // Bright white-orange
+      float crackEdge = allCracks * (1.0 - allCracks) * 12.0;
+      crackEdge = smoothstep(0.4, 0.8, crackEdge);
+      color += hotEdgeColor * crackEdge * radialFade * 0.3 * freshness;
+
+      // Subtle purple/teal glow as cracks cool
       vec3 glowColor = mix(
-        vec3(0.4, 0.15, 0.5),  // Dark purple
-        vec3(0.15, 0.5, 0.45), // Dark teal
+        vec3(0.4, 0.15, 0.5),
+        vec3(0.15, 0.5, 0.45),
         sin(time * 2.0) * 0.5 + 0.5
       );
+      color += glowColor * crackEdge * radialFade * 0.15 * crackPhase;
 
-      // Very subtle edge glow - barely noticeable
-      float crackEdge = allCracks * (1.0 - allCracks) * 8.0;
-      crackEdge = smoothstep(0.3, 0.7, crackEdge);
-      color += glowColor * crackEdge * radialFade * 0.15;
+      // Refraction-like shimmer on glass surfaces
+      float shimmer = sin(time * 3.0 + hash21(cellId) * 6.28) * 0.5 + 0.5;
+      color += vec3(0.2, 0.25, 0.3) * shimmer * radialFade * 0.05 * (1.0 - allCracks);
 
-      // Slight darkening/desaturation of shattered area
-      float desaturate = radialFade * 0.25;
+      // Desaturation and darkening of shattered area
+      float desaturate = radialFade * 0.3;
       float luminance = dot(color, vec3(0.299, 0.587, 0.114));
-      color = mix(color, vec3(luminance) * 0.8, desaturate);
+      color = mix(color, vec3(luminance) * 0.75, desaturate);
 
       gl_FragColor = vec4(color, 1.0);
     }
@@ -339,9 +354,149 @@ const RealityCrackShader = {
 };
 
 // ============================================================================
-// PARTICLE SYSTEM
+// PARTICLE SYSTEMS
 // ============================================================================
 
+// Glass Dust Particle System - for reality shatter effect
+class GlassDustParticles {
+  geometry: THREE.BufferGeometry;
+  material: THREE.ShaderMaterial;
+  points: THREE.Points;
+  maxParticles: number;
+  particles: Array<{
+    position: THREE.Vector3;
+    velocity: THREE.Vector3;
+    life: number;
+    maxLife: number;
+    size: number;
+    rotation: number;
+    rotationSpeed: number;
+  }>;
+
+  constructor(maxParticles = 1000) {
+    this.maxParticles = maxParticles;
+    this.particles = [];
+
+    this.geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(maxParticles * 3);
+    const sizes = new Float32Array(maxParticles);
+    const alphas = new Float32Array(maxParticles);
+
+    this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    this.geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    this.geometry.setAttribute('alpha', new THREE.BufferAttribute(alphas, 1));
+
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 }
+      },
+      vertexShader: `
+        attribute float size;
+        attribute float alpha;
+        varying float vAlpha;
+
+        void main() {
+          vAlpha = alpha;
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = size * (300.0 / -mvPosition.z);
+          gl_Position = projectionMatrix * mvPosition;
+        }
+      `,
+      fragmentShader: `
+        varying float vAlpha;
+
+        void main() {
+          vec2 center = gl_PointCoord - 0.5;
+          float dist = length(center);
+
+          // Square shape for glass shards
+          float shard = smoothstep(0.5, 0.3, dist);
+
+          // Add sparkle
+          float sparkle = pow(1.0 - dist * 2.0, 3.0);
+
+          float alpha = (shard + sparkle * 0.5) * vAlpha;
+
+          if (alpha < 0.01) discard;
+
+          // White/bright color for glass
+          vec3 color = vec3(0.9, 0.95, 1.0) + vec3(sparkle * 0.5);
+
+          gl_FragColor = vec4(color, alpha * 0.6);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    this.points = new THREE.Points(this.geometry, this.material);
+  }
+
+  emit(position: THREE.Vector3, direction: THREE.Vector3, count: number) {
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+
+      const vel = direction.clone();
+      vel.x += (Math.random() - 0.5) * 8;
+      vel.y += (Math.random() - 0.5) * 8;
+      vel.z += (Math.random() - 0.5) * 8;
+
+      this.particles.push({
+        position: position.clone(),
+        velocity: vel,
+        life: 1.0,
+        maxLife: 0.8 + Math.random() * 0.4, // 0.8-1.2 seconds
+        size: 0.3 + Math.random() * 1.2, // Small glass shards
+        rotation: Math.random() * Math.PI * 2,
+        rotationSpeed: (Math.random() - 0.5) * 4,
+      });
+    }
+  }
+
+  update(deltaTime: number) {
+    const positions = this.geometry.attributes.position.array as Float32Array;
+    const sizes = this.geometry.attributes.size.array as Float32Array;
+    const alphas = this.geometry.attributes.alpha.array as Float32Array;
+
+    this.particles = this.particles.filter((p, i) => {
+      p.life -= deltaTime / p.maxLife;
+      if (p.life <= 0) return false;
+
+      // Apply gravity
+      p.velocity.y -= 9.8 * deltaTime * 0.3;
+
+      // Update position
+      p.position.add(p.velocity.clone().multiplyScalar(deltaTime));
+
+      // Air resistance
+      p.velocity.multiplyScalar(0.985);
+
+      // Update rotation
+      p.rotation += p.rotationSpeed * deltaTime;
+
+      positions[i * 3] = p.position.x;
+      positions[i * 3 + 1] = p.position.y;
+      positions[i * 3 + 2] = p.position.z;
+
+      sizes[i] = p.size;
+      alphas[i] = p.life;
+
+      return true;
+    });
+
+    this.geometry.setDrawRange(0, this.particles.length);
+    this.geometry.attributes.position.needsUpdate = true;
+    this.geometry.attributes.size.needsUpdate = true;
+    this.geometry.attributes.alpha.needsUpdate = true;
+  }
+
+  getMesh() {
+    return this.points;
+  }
+}
+
+// Explosion Particle System
 class ParticleSystem {
   geometry: THREE.BufferGeometry;
   material: THREE.ShaderMaterial;
@@ -459,7 +614,8 @@ class SceneManager {
   comet: THREE.Mesh | null = null;
   cometMaterial: THREE.ShaderMaterial | null = null;
   particles: ParticleSystem;
-  craterGlow: THREE.Mesh | null = null;
+  glassDust: GlassDustParticles;
+  craterGlow: THREE.Group | null = null;
   blackHolePosition: THREE.Vector3 = new THREE.Vector3(0, -8, 10);
   starsPulledIn: Set<number> = new Set();
 
@@ -503,6 +659,9 @@ class SceneManager {
     // Systems
     this.particles = new ParticleSystem(3000);
     this.scene.add(this.particles.getMesh());
+
+    this.glassDust = new GlassDustParticles(1000);
+    this.scene.add(this.glassDust.getMesh());
 
     this.clock = new THREE.Clock();
     this.timeline = { phase: 'fade_in', time: 0 };
@@ -626,18 +785,95 @@ class SceneManager {
 
   createCraterGlow() {
     const impactPoint = new THREE.Vector3(0, -8, 10);
+    this.blackHolePosition.copy(impactPoint);
 
-    // BLACK HOLE - Dark center with subtle accretion disk
-    const blackHoleGeometry = new THREE.RingGeometry(0.5, 12, 64);
-    const blackHoleMaterial = new THREE.ShaderMaterial({
+    // Create 3D BLACK HOLE GROUP
+    const blackHoleGroup = new THREE.Group();
+    blackHoleGroup.position.copy(impactPoint);
+
+    // 1. EVENT HORIZON - Pure black sphere at center
+    const eventHorizonGeometry = new THREE.SphereGeometry(2.5, 32, 32);
+    const eventHorizonMaterial = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 1.0,
+    });
+    const eventHorizon = new THREE.Mesh(eventHorizonGeometry, eventHorizonMaterial);
+    blackHoleGroup.add(eventHorizon);
+
+    // 2. VOLUMETRIC INNER CORE - Swirling dark energy
+    const innerCoreGeometry = new THREE.SphereGeometry(3.5, 32, 32);
+    const innerCoreMaterial = new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
-        innerRadius: { value: 0.5 },
-        outerRadius: { value: 12.0 },
+      },
+      vertexShader: `
+        varying vec3 vPosition;
+        varying vec3 vNormal;
+
+        void main() {
+          vPosition = position;
+          vNormal = normalize(normalMatrix * normal);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        varying vec3 vPosition;
+        varying vec3 vNormal;
+
+        // Noise function for swirling patterns
+        float hash(vec3 p) {
+          return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+        }
+
+        void main() {
+          // Create swirling vortex pattern
+          float angle = atan(vPosition.y, vPosition.x);
+          float radius = length(vPosition.xy);
+
+          // Multiple layers of spirals
+          float spiral1 = sin(angle * 5.0 + radius * 2.0 - time * 3.0);
+          float spiral2 = sin(angle * 7.0 - radius * 3.0 + time * 2.0);
+          float spiral3 = sin(angle * 11.0 + radius * 1.5 - time * 4.0);
+
+          float pattern = (spiral1 + spiral2 * 0.5 + spiral3 * 0.3) * 0.5 + 0.5;
+
+          // Add depth-based fade (more transparent toward edges)
+          float fresnel = pow(1.0 - abs(dot(vNormal, vec3(0, 0, 1))), 2.0);
+
+          // Color - dark purple/teal swirl
+          vec3 purple = vec3(0.3, 0.05, 0.4);
+          vec3 teal = vec3(0.05, 0.3, 0.35);
+          vec3 color = mix(purple, teal, pattern);
+
+          // Pulsing intensity
+          float pulse = sin(time * 1.5) * 0.2 + 0.8;
+          color *= pulse;
+
+          float alpha = pattern * fresnel * 0.6;
+
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      side: THREE.BackSide,
+      depthWrite: false,
+    });
+    const innerCore = new THREE.Mesh(innerCoreGeometry, innerCoreMaterial);
+    blackHoleGroup.add(innerCore);
+
+    // 3. ACCRETION DISK - Rotating disk of matter
+    const diskGeometry = new THREE.RingGeometry(3, 10, 64);
+    const diskMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
       },
       vertexShader: `
         varying vec2 vUv;
         varying vec3 vPosition;
+
         void main() {
           vUv = uv;
           vPosition = position;
@@ -646,35 +882,35 @@ class SceneManager {
       `,
       fragmentShader: `
         uniform float time;
-        uniform float innerRadius;
-        uniform float outerRadius;
         varying vec2 vUv;
         varying vec3 vPosition;
 
         void main() {
           vec2 center = vec2(0.5, 0.5);
-          float dist = length(vUv - center) * 24.0; // Scale to ring size
+          vec2 fromCenter = vUv - center;
+          float dist = length(fromCenter) * 2.0;
+          float angle = atan(fromCenter.y, fromCenter.x);
 
-          // Event horizon - pure black center
-          if (dist < innerRadius) {
-            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-            return;
-          }
+          // Multi-layered spiral arms
+          float spiral1 = sin(angle * 3.0 - dist * 2.0 + time * 2.0);
+          float spiral2 = sin(angle * 5.0 + dist * 1.5 - time * 1.5);
+          float spiral3 = sin(angle * 7.0 - dist * 3.0 + time * 2.5);
 
-          // Accretion disk - subtle purple/teal glow
-          float diskFade = smoothstep(outerRadius, innerRadius, dist);
-          float angle = atan(vUv.y - 0.5, vUv.x - 0.5);
+          float pattern = (spiral1 + spiral2 * 0.6 + spiral3 * 0.4) * 0.5 + 0.5;
 
-          // Rotating spiral pattern
-          float spiral = sin(angle * 3.0 - dist * 0.5 + time * 2.0) * 0.5 + 0.5;
+          // Radial fade
+          float radialFade = smoothstep(1.0, 0.3, dist) * smoothstep(0.15, 0.4, dist);
 
-          // Color mixing - purple to teal
-          vec3 purple = vec3(0.4, 0.1, 0.6);
-          vec3 teal = vec3(0.1, 0.5, 0.5);
-          vec3 color = mix(purple, teal, spiral);
+          // Color gradient from inner (hot) to outer (cool)
+          vec3 innerColor = vec3(0.6, 0.2, 0.8); // Bright purple
+          vec3 outerColor = vec3(0.1, 0.4, 0.5); // Dark teal
+          vec3 color = mix(innerColor, outerColor, dist * 0.7);
 
-          // Fade out toward edges
-          float alpha = diskFade * 0.4;
+          // Add bright hotspots
+          float hotspot = pow(pattern, 3.0);
+          color += vec3(0.4, 0.3, 0.5) * hotspot * (1.0 - dist);
+
+          float alpha = radialFade * (0.4 + pattern * 0.3);
 
           gl_FragColor = vec4(color, alpha);
         }
@@ -685,24 +921,55 @@ class SceneManager {
       depthWrite: false,
     });
 
-    this.craterGlow = new THREE.Mesh(blackHoleGeometry, blackHoleMaterial);
-    this.craterGlow.position.copy(impactPoint);
-    this.craterGlow.rotation.x = -Math.PI / 2;
-    this.scene.add(this.craterGlow);
+    const accretionDisk = new THREE.Mesh(diskGeometry, diskMaterial);
+    accretionDisk.rotation.x = -Math.PI / 2.5; // Tilt for 3D effect
+    blackHoleGroup.add(accretionDisk);
 
-    // Dark core - absorbs light
-    const coreGeometry = new THREE.CircleGeometry(2, 32);
-    const coreMaterial = new THREE.MeshBasicMaterial({
-      color: 0x000000,
+    // 4. OUTER GLOW - Subtle atmospheric glow
+    const glowGeometry = new THREE.SphereGeometry(5, 32, 32);
+    const glowMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+      },
+      vertexShader: `
+        varying vec3 vNormal;
+
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        varying vec3 vNormal;
+
+        void main() {
+          float fresnel = pow(1.0 - abs(dot(vNormal, vec3(0, 0, 1))), 3.0);
+
+          vec3 glowColor = vec3(0.2, 0.1, 0.3);
+          float pulse = sin(time * 2.0) * 0.3 + 0.7;
+
+          float alpha = fresnel * 0.15 * pulse;
+
+          gl_FragColor = vec4(glowColor, alpha);
+        }
+      `,
       transparent: true,
-      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      side: THREE.BackSide,
+      depthWrite: false,
     });
-    const core = new THREE.Mesh(coreGeometry, coreMaterial);
-    core.position.copy(impactPoint);
-    core.position.y += 0.1; // Slightly above to layer properly
-    core.rotation.x = -Math.PI / 2;
-    this.scene.add(core);
-    this.craterGlow.userData.core = core;
+    const outerGlow = new THREE.Mesh(glowGeometry, glowMaterial);
+    blackHoleGroup.add(outerGlow);
+
+    // Store references
+    blackHoleGroup.userData.eventHorizon = eventHorizon;
+    blackHoleGroup.userData.innerCore = innerCore;
+    blackHoleGroup.userData.accretionDisk = accretionDisk;
+    blackHoleGroup.userData.outerGlow = outerGlow;
+
+    this.craterGlow = blackHoleGroup;
+    this.scene.add(blackHoleGroup);
   }
 
   update() {
@@ -820,26 +1087,69 @@ class SceneManager {
       // Bloom decay
       this.bloomPass.strength = Math.max(2.0, 6.0 - elapsed * 4.0);
 
-      // Black hole - rotate and update
+      // 3D Black hole - rotate in multiple axes for full 3D effect
       if (this.craterGlow) {
-        const material = this.craterGlow.material as THREE.ShaderMaterial;
-        material.uniforms.time.value = t;
-        material.opacity = fadeProgress;
+        // Update all shader uniforms
+        const innerCore = this.craterGlow.userData.innerCore;
+        const accretionDisk = this.craterGlow.userData.accretionDisk;
+        const outerGlow = this.craterGlow.userData.outerGlow;
 
-        // Rotate black hole
-        this.craterGlow.rotation.z += deltaTime * 0.5;
+        if (innerCore) {
+          (innerCore.material as THREE.ShaderMaterial).uniforms.time.value = t;
+        }
+        if (accretionDisk) {
+          (accretionDisk.material as THREE.ShaderMaterial).uniforms.time.value = t;
+        }
+        if (outerGlow) {
+          (outerGlow.material as THREE.ShaderMaterial).uniforms.time.value = t;
+        }
 
-        // Rotate dark core
-        if (this.craterGlow.userData.core) {
-          this.craterGlow.userData.core.rotation.z -= deltaTime * 0.3;
+        // Fade in black hole
+        this.craterGlow.scale.setScalar(fadeProgress);
+
+        // 3D Rotation - multiple axes for depth
+        this.craterGlow.rotation.y += deltaTime * 0.3; // Slow Y rotation
+        this.craterGlow.rotation.z += deltaTime * 0.15; // Slow Z wobble
+
+        // Accretion disk rotates faster
+        if (accretionDisk) {
+          accretionDisk.rotation.z += deltaTime * 2.0;
+        }
+
+        // Inner core counter-rotates
+        if (innerCore) {
+          innerCore.rotation.y -= deltaTime * 0.8;
         }
       }
 
       // Pull stars into black hole
       this.pullStarsIntoBlackHole(deltaTime);
 
-      // Reality crack effect fade in - FULL intensity
+      // Glass dust particles - emit from crack lines
+      if (elapsed < 0.6) { // First 600ms of crater settle
+        const crackCenter = new THREE.Vector3(0, -8, 10);
+        for (let i = 0; i < 24; i++) { // 24 radial cracks
+          const angle = (i / 24) * Math.PI * 2;
+          const distance = 5 + Math.random() * 8;
+
+          const particlePos = crackCenter.clone();
+          particlePos.x += Math.cos(angle) * distance;
+          particlePos.y += Math.sin(angle) * distance * 0.3; // Flatter on Y
+          particlePos.z += Math.sin(angle) * distance;
+
+          const particleDir = new THREE.Vector3(
+            Math.cos(angle) * 3,
+            Math.random() * 4 - 1,
+            Math.sin(angle) * 3
+          );
+
+          this.glassDust.emit(particlePos, particleDir, 2);
+        }
+      }
+
+      // Reality crack effect fade in with animated crack expansion
       this.crackPass.uniforms['intensity'].value = fadeProgress;
+      this.crackPass.uniforms['crackPhase'].value = fadeProgress;
       this.crackPass.uniforms['time'].value = t;
 
       // Title reveal at 0.4s into crater settle
@@ -857,21 +1167,32 @@ class SceneManager {
     else if (this.timeline.phase === 'button_reveal') {
       const elapsed = t - 5.5;
 
-      // Continue black hole rotation
+      // Continue 3D black hole rotation
       if (this.craterGlow) {
-        const material = this.craterGlow.material as THREE.ShaderMaterial;
-        material.uniforms.time.value = t;
+        const innerCore = this.craterGlow.userData.innerCore;
+        const accretionDisk = this.craterGlow.userData.accretionDisk;
+        const outerGlow = this.craterGlow.userData.outerGlow;
 
-        this.craterGlow.rotation.z += deltaTime * 0.5;
-
-        if (this.craterGlow.userData.core) {
-          this.craterGlow.userData.core.rotation.z -= deltaTime * 0.3;
+        if (innerCore) {
+          (innerCore.material as THREE.ShaderMaterial).uniforms.time.value = t;
+          innerCore.rotation.y -= deltaTime * 0.8;
         }
+        if (accretionDisk) {
+          (accretionDisk.material as THREE.ShaderMaterial).uniforms.time.value = t;
+          accretionDisk.rotation.z += deltaTime * 2.0;
+        }
+        if (outerGlow) {
+          (outerGlow.material as THREE.ShaderMaterial).uniforms.time.value = t;
+        }
+
+        this.craterGlow.rotation.y += deltaTime * 0.3;
+        this.craterGlow.rotation.z += deltaTime * 0.15;
       }
 
       // Continue pulling stars
       this.pullStarsIntoBlackHole(deltaTime);
 
+      this.crackPass.uniforms['crackPhase'].value = 1.0; // Fully expanded
       this.crackPass.uniforms['time'].value = t;
 
       // Button reveal
@@ -888,24 +1209,36 @@ class SceneManager {
     // PHASE 6: COMPLETE - maintain black hole effects indefinitely
     else if (this.timeline.phase === 'complete') {
       if (this.craterGlow) {
-        const material = this.craterGlow.material as THREE.ShaderMaterial;
-        material.uniforms.time.value = t;
+        const innerCore = this.craterGlow.userData.innerCore;
+        const accretionDisk = this.craterGlow.userData.accretionDisk;
+        const outerGlow = this.craterGlow.userData.outerGlow;
 
-        this.craterGlow.rotation.z += deltaTime * 0.5;
-
-        if (this.craterGlow.userData.core) {
-          this.craterGlow.userData.core.rotation.z -= deltaTime * 0.3;
+        if (innerCore) {
+          (innerCore.material as THREE.ShaderMaterial).uniforms.time.value = t;
+          innerCore.rotation.y -= deltaTime * 0.8;
         }
+        if (accretionDisk) {
+          (accretionDisk.material as THREE.ShaderMaterial).uniforms.time.value = t;
+          accretionDisk.rotation.z += deltaTime * 2.0;
+        }
+        if (outerGlow) {
+          (outerGlow.material as THREE.ShaderMaterial).uniforms.time.value = t;
+        }
+
+        this.craterGlow.rotation.y += deltaTime * 0.3;
+        this.craterGlow.rotation.z += deltaTime * 0.15;
       }
 
       // Continue pulling stars
       this.pullStarsIntoBlackHole(deltaTime);
 
+      this.crackPass.uniforms['crackPhase'].value = 1.0;
       this.crackPass.uniforms['time'].value = t;
     }
 
     // Update particles
     this.particles.update(deltaTime);
+    this.glassDust.update(deltaTime);
 
     // Render
     this.composer.render();
