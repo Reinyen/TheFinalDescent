@@ -234,7 +234,7 @@ function PartySelectScreen({
     if (fxRef.current?.playSingleReroll) {
       await fxRef.current.playSingleReroll(cardRect, starRect);
     } else {
-      await new Promise(resolve => setTimeout(resolve, 700));
+      await new Promise(resolve => setTimeout(resolve, 950));
     }
 
     setLivingRoster(nextLiving);
@@ -264,7 +264,7 @@ function PartySelectScreen({
     if (fxRef.current?.playTotalReroll) {
       await fxRef.current.playTotalReroll(cardRects, starRect);
     } else {
-      await new Promise(resolve => setTimeout(resolve, 750));
+      await new Promise(resolve => setTimeout(resolve, 1050));
     }
 
     setLivingRoster(nextLiving);
@@ -333,6 +333,159 @@ function PartySelectScreen({
   const getCharacter = (id: string) => characters.find(c => c.id === id)!;
   const abilityListFor = (id: string) => getCharacterAbilities(id);
 
+  const getConstellationPattern = (characterId: string) => {
+    const patterns: Record<string, { stars: { x: number; y: number; size: number }[]; lines: { x1: number; y1: number; x2: number; y2: number }[] }> = {
+      dranick: {
+        stars: [
+          { x: 50, y: 30, size: 2.5 },
+          { x: 35, y: 50, size: 2 },
+          { x: 65, y: 50, size: 2 },
+          { x: 50, y: 70, size: 3 },
+          { x: 25, y: 65, size: 1.5 },
+          { x: 75, y: 65, size: 1.5 },
+        ],
+        lines: [
+          { x1: 50, y1: 30, x2: 35, y2: 50 },
+          { x1: 50, y1: 30, x2: 65, y2: 50 },
+          { x1: 35, y1: 50, x2: 50, y2: 70 },
+          { x1: 65, y1: 50, x2: 50, y2: 70 },
+        ],
+      },
+      eline: {
+        stars: [
+          { x: 50, y: 25, size: 2 },
+          { x: 30, y: 40, size: 2 },
+          { x: 70, y: 40, size: 2 },
+          { x: 50, y: 55, size: 2.5 },
+          { x: 40, y: 70, size: 1.5 },
+          { x: 60, y: 70, size: 1.5 },
+          { x: 50, y: 80, size: 2 },
+        ],
+        lines: [
+          { x1: 50, y1: 25, x2: 30, y2: 40 },
+          { x1: 50, y1: 25, x2: 70, y2: 40 },
+          { x1: 30, y1: 40, x2: 50, y2: 55 },
+          { x1: 70, y1: 40, x2: 50, y2: 55 },
+          { x1: 50, y1: 55, x2: 40, y2: 70 },
+          { x1: 50, y1: 55, x2: 60, y2: 70 },
+          { x1: 40, y1: 70, x2: 50, y2: 80 },
+          { x1: 60, y1: 70, x2: 50, y2: 80 },
+        ],
+      },
+      varro: {
+        stars: [
+          { x: 50, y: 35, size: 3 },
+          { x: 35, y: 50, size: 2 },
+          { x: 65, y: 50, size: 2 },
+          { x: 35, y: 65, size: 2 },
+          { x: 65, y: 65, size: 2 },
+        ],
+        lines: [
+          { x1: 50, y1: 35, x2: 35, y2: 50 },
+          { x1: 50, y1: 35, x2: 65, y2: 50 },
+          { x1: 35, y1: 50, x2: 35, y2: 65 },
+          { x1: 65, y1: 50, x2: 65, y2: 65 },
+          { x1: 35, y1: 65, x2: 65, y2: 65 },
+        ],
+      },
+      kestril: {
+        stars: [
+          { x: 50, y: 28, size: 2 },
+          { x: 40, y: 45, size: 2.5 },
+          { x: 60, y: 45, size: 2.5 },
+          { x: 30, y: 60, size: 1.8 },
+          { x: 50, y: 60, size: 2 },
+          { x: 70, y: 60, size: 1.8 },
+          { x: 50, y: 75, size: 2.2 },
+        ],
+        lines: [
+          { x1: 50, y1: 28, x2: 40, y2: 45 },
+          { x1: 50, y1: 28, x2: 60, y2: 45 },
+          { x1: 40, y1: 45, x2: 30, y2: 60 },
+          { x1: 40, y1: 45, x2: 50, y2: 60 },
+          { x1: 60, y1: 45, x2: 70, y2: 60 },
+          { x1: 60, y1: 45, x2: 50, y2: 60 },
+          { x1: 50, y1: 60, x2: 50, y2: 75 },
+        ],
+      },
+      lira: {
+        stars: [
+          { x: 50, y: 30, size: 2.5 },
+          { x: 38, y: 48, size: 2 },
+          { x: 62, y: 48, size: 2 },
+          { x: 32, y: 65, size: 1.8 },
+          { x: 50, y: 62, size: 2.2 },
+          { x: 68, y: 65, size: 1.8 },
+        ],
+        lines: [
+          { x1: 50, y1: 30, x2: 38, y2: 48 },
+          { x1: 50, y1: 30, x2: 62, y2: 48 },
+          { x1: 38, y1: 48, x2: 32, y2: 65 },
+          { x1: 62, y1: 48, x2: 68, y2: 65 },
+          { x1: 38, y1: 48, x2: 50, y2: 62 },
+          { x1: 62, y1: 48, x2: 50, y2: 62 },
+        ],
+      },
+      grim: {
+        stars: [
+          { x: 50, y: 32, size: 2.8 },
+          { x: 35, y: 48, size: 2.2 },
+          { x: 65, y: 48, size: 2.2 },
+          { x: 25, y: 64, size: 2 },
+          { x: 50, y: 64, size: 2 },
+          { x: 75, y: 64, size: 2 },
+          { x: 50, y: 78, size: 2.5 },
+        ],
+        lines: [
+          { x1: 50, y1: 32, x2: 35, y2: 48 },
+          { x1: 50, y1: 32, x2: 65, y2: 48 },
+          { x1: 35, y1: 48, x2: 25, y2: 64 },
+          { x1: 65, y1: 48, x2: 75, y2: 64 },
+          { x1: 25, y1: 64, x2: 50, y2: 64 },
+          { x1: 50, y1: 64, x2: 75, y2: 64 },
+          { x1: 50, y1: 64, x2: 50, y2: 78 },
+        ],
+      },
+    };
+
+    const pattern = patterns[characterId] || patterns.dranick;
+    return (
+      <svg className="constellation" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <filter id={`glow-${characterId}`}>
+            <feGaussianBlur stdDeviation="0.5" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        {pattern.lines.map((line, idx) => (
+          <line
+            key={`line-${idx}`}
+            x1={`${line.x1}%`}
+            y1={`${line.y1}%`}
+            x2={`${line.x2}%`}
+            y2={`${line.y2}%`}
+            stroke="rgba(232, 244, 253, 0.25)"
+            strokeWidth="0.3"
+            filter={`url(#glow-${characterId})`}
+          />
+        ))}
+        {pattern.stars.map((star, idx) => (
+          <circle
+            key={`star-${idx}`}
+            cx={`${star.x}%`}
+            cy={`${star.y}%`}
+            r={star.size}
+            fill="rgba(232, 244, 253, 0.7)"
+            filter={`url(#glow-${characterId})`}
+          />
+        ))}
+      </svg>
+    );
+  };
+
   useEffect(() => {
     if (livingRoster.length === 3 && fallenRoster.length === 3 && !introPlayed) {
       setLocked(true);
@@ -395,6 +548,7 @@ function PartySelectScreen({
                     onMouseLeave={closePopover}
                   >
                     <div className="glow"></div>
+                    {getConstellationPattern(id)}
                     <div className="marked">
                       <span className="sigil-dot"></span>
                       <span>MARKED</span>

@@ -259,8 +259,27 @@ body {
 }
 
 .card.selected {
-  border-color: rgba(255, 215, 0, 0.85);
-  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 215, 0, 0.25) inset;
+  border-color: rgba(255, 215, 0, 0.95);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 215, 0, 0.35) inset,
+    0 0 40px rgba(255, 215, 0, 0.4),
+    0 0 80px rgba(255, 215, 0, 0.2);
+  animation: selectedPulse 2s ease-in-out infinite;
+}
+
+@keyframes selectedPulse {
+  0%, 100% {
+    box-shadow: 0 20px 70px rgba(0, 0, 0, 0.6),
+      0 0 0 1px rgba(255, 215, 0, 0.35) inset,
+      0 0 40px rgba(255, 215, 0, 0.4),
+      0 0 80px rgba(255, 215, 0, 0.2);
+  }
+  50% {
+    box-shadow: 0 22px 75px rgba(0, 0, 0, 0.65),
+      0 0 0 2px rgba(255, 215, 0, 0.45) inset,
+      0 0 50px rgba(255, 215, 0, 0.5),
+      0 0 100px rgba(255, 215, 0, 0.3);
+  }
 }
 
 .card.selected .marked {
@@ -297,6 +316,20 @@ body {
   border-radius: 50%;
   background: rgba(255, 215, 0, 0.9);
   box-shadow: 0 0 16px rgba(255, 215, 0, 0.5);
+}
+
+.constellation {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.3;
+  mix-blend-mode: screen;
+  z-index: 0;
+}
+
+.card:hover .constellation {
+  opacity: 0.45;
+  transition: opacity 0.3s ease;
 }
 
 .card-body {
@@ -497,15 +530,19 @@ body {
 .fallen::after {
   content: "";
   position: absolute;
-  inset: -30px;
-  background: linear-gradient(25deg, transparent 45%, rgba(255, 255, 255, 0.1) 46%, transparent 48%),
-    linear-gradient(-30deg, transparent 48%, rgba(255, 255, 255, 0.08) 49%, transparent 52%),
-    linear-gradient(70deg, transparent 43%, rgba(255, 255, 255, 0.06) 44%, transparent 46%),
-    radial-gradient(220px 140px at 55% 40%, rgba(255, 255, 255, 0.05), transparent 60%);
-  opacity: 0.55;
+  inset: 0;
+  background:
+    linear-gradient(25deg, transparent 45%, rgba(255, 255, 255, 0.18) 46%, rgba(255, 255, 255, 0.12) 47%, transparent 49%),
+    linear-gradient(-30deg, transparent 47%, rgba(255, 255, 255, 0.15) 48%, rgba(255, 255, 255, 0.1) 49%, transparent 52%),
+    linear-gradient(70deg, transparent 42%, rgba(255, 255, 255, 0.16) 43%, rgba(255, 255, 255, 0.08) 45%, transparent 47%),
+    linear-gradient(110deg, transparent 35%, rgba(255, 255, 255, 0.12) 36%, transparent 39%),
+    linear-gradient(-55deg, transparent 58%, rgba(255, 255, 255, 0.14) 59%, transparent 62%),
+    linear-gradient(160deg, transparent 28%, rgba(255, 255, 255, 0.1) 29%, transparent 32%),
+    linear-gradient(-85deg, transparent 64%, rgba(255, 255, 255, 0.13) 65%, transparent 68%),
+    radial-gradient(80px 60px at 55% 40%, rgba(255, 255, 255, 0.08), transparent 60%);
+  opacity: 0.85;
   mix-blend-mode: screen;
   pointer-events: none;
-  transform: rotate(-4deg);
 }
 
 .fallen-name {

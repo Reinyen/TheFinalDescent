@@ -390,32 +390,36 @@ export const RosterVFX = forwardRef<RosterFxHandle>((_, ref) => {
 
     intro.stars.forEach(star => {
       const mesh = star.mesh;
+      // Phase B: Stars emerge (220-1600ms) - all appear alive
       const appear = clamp01((elapsed - 220) / 900);
       const startVec = new THREE.Vector3(sizeRef.current.w / 2, sizeRef.current.h * 0.18, 0);
       mesh.position.lerpVectors(startVec, star.arcTarget, easeOut(appear));
       mesh.material.opacity = 0.15 + 0.85 * appear;
-      const pulse = 1 + Math.sin(Math.min(elapsed, 1600) * 0.004) * 0.06;
+      const pulse = 1 + Math.sin(Math.min(elapsed, 1600) * 0.004) * 0.08;
       mesh.scale.setScalar(0.65 + 0.35 * appear * pulse);
 
-      // halo tighten for chosen fallen after sweep
+      // Phase C: Halo tighten for chosen fallen after sweep (1550-2070ms)
       if (star.halo) {
-        const haloFocus = clamp01((elapsed - 1550) / 520) * (star.isFallen ? 1 : 0.4);
+        const haloFocus = clamp01((elapsed - 1550) / 520) * (star.isFallen ? 1 : 0.3);
         star.halo.position.copy(mesh.position);
-        star.halo.scale.setScalar(1.2 - 0.35 * haloFocus);
-        star.halo.material.opacity = 0.38 * haloFocus;
+        star.halo.scale.setScalar(1.25 - 0.4 * haloFocus);
+        star.halo.material.opacity = 0.45 * haloFocus;
       }
 
-      // Fate made real: fallen fracture + dim
+      // Phase C: Fate made real - death insinuation (1900-2800ms)
       if (elapsed > 1900 && star.isFallen) {
         const deadT = clamp01((elapsed - 1900) / 900);
-        mesh.material.color = star.baseColor.clone().lerp(new THREE.Color(0x6f7380), deadT);
-        mesh.material.opacity = 0.95 - 0.45 * deadT;
-        mesh.scale.setScalar(0.94 - 0.24 * deadT);
+        // More dramatic color shift
+        mesh.material.color = star.baseColor.clone().lerp(new THREE.Color(0x5a6270), deadT * 0.85);
+        mesh.material.opacity = 0.95 - 0.5 * deadT;
+        // Subtle shrink
+        mesh.scale.setScalar((0.94 - 0.24 * deadT) * pulse);
 
+        // Create negative pulse ring
         if (!star.ring) {
-          const ringGeo = new THREE.RingGeometry(12, 18, 32);
+          const ringGeo = new THREE.RingGeometry(14, 20, 32);
           const ringMat = new THREE.MeshBasicMaterial({
-            color: 0x6f7380,
+            color: 0x5a6270,
             transparent: true,
             opacity: 0.0,
             blending: THREE.AdditiveBlending,
@@ -427,25 +431,25 @@ export const RosterVFX = forwardRef<RosterFxHandle>((_, ref) => {
         }
 
         if (star.ring) {
-          const ringT = clamp01((elapsed - 1900) / 600);
+          const ringT = clamp01((elapsed - 1900) / 700);
           star.ring.position.copy(mesh.position);
-          star.ring.scale.setScalar(1 + ringT * 2.2);
-          star.ring.material.opacity = 0.35 * (1 - ringT);
+          star.ring.scale.setScalar(1 + ringT * 2.5);
+          star.ring.material.opacity = 0.4 * (1 - ringT);
         }
       }
 
-      // Phase D: the fall
+      // Phase D: The fall (2400-3300ms) - fallen stars drop with weight
       if (elapsed > 2400 && star.isFallen) {
         const dropT = easeOut(clamp01((elapsed - 2400) / 900));
         mesh.position.lerpVectors(star.arcTarget, star.finalTarget, dropT);
       }
 
-      // Phase E: morph into UI anchors for everyone
+      // Phase E: Morph into UI (3000-4700ms) - all stars fade into card positions
       if (elapsed > 3000) {
         const morphT = easeOut(clamp01((elapsed - 3000) / 900));
         mesh.position.lerp(star.finalTarget, morphT);
-        mesh.material.opacity = Math.max(0.05, mesh.material.opacity * (1 - morphT * 0.65));
-        if (star.halo) star.halo.material.opacity = Math.max(0, star.halo.material.opacity * (1 - morphT));
+        mesh.material.opacity = Math.max(0.05, mesh.material.opacity * (1 - morphT * 0.7));
+        if (star.halo) star.halo.material.opacity = Math.max(0, star.halo.material.opacity * (1 - morphT * 1.2));
       }
     });
 
@@ -480,20 +484,60 @@ export const RosterVFX = forwardRef<RosterFxHandle>((_, ref) => {
   const playSingleReroll = async (cardRect?: DOMRect | null, starsRect?: DOMRect | null) => {
     await ensureThree();
     const origin = toScenePoint(cardRect);
-    spawnBurst(origin, 95, 0xffd700, true, 1.2);
+
+    // Shatter burst (gold particles exploding outward)
+    spawnBurst(origin, 120, 0xffd700, true, 1.5);
+
+    // Secondary burst with blue-white particles (more magical)
+    setTimeout(() => {
+      spawnBurst(origin, 80, 0xe8f4fd, true, 1.3);
+    }, 150);
+
+    // Spiral effect (additional particles with rotation)
+    setTimeout(() => {
+      spawnBurst(origin, 60, 0x98d4ff, true, 1.8);
+    }, 300);
+
+    // Recoalesce effect (particles coming back down)
+    setTimeout(() => {
+      spawnBurst(origin, 50, 0xffd700, false, 0.8);
+    }, 500);
+
+    // Ash for spent reroll stars
     spawnAsh(starsRect, 2);
-    return new Promise<void>(res => setTimeout(res, 820));
+
+    return new Promise<void>(res => setTimeout(res, 950));
   };
 
   const playTotalReroll = async (cardRects?: DOMRect[] | null, starsRect?: DOMRect | null) => {
     await ensureThree();
     if (cardRects && cardRects.length) {
-      cardRects.forEach(rect => spawnBurst(toScenePoint(rect), 70, 0x98d4ff, true, 0.9));
+      // Staggered shatter for each card
+      cardRects.forEach((rect, idx) => {
+        setTimeout(() => {
+          const origin = toScenePoint(rect);
+          spawnBurst(origin, 85, 0x98d4ff, true, 1.1);
+          // Secondary burst for more impact
+          setTimeout(() => {
+            spawnBurst(origin, 50, 0xe8f4fd, true, 0.9);
+          }, 100);
+        }, idx * 120);
+      });
+
+      // Recoalesce effect for all cards
+      setTimeout(() => {
+        cardRects.forEach(rect => {
+          spawnBurst(toScenePoint(rect), 40, 0xffd700, false, 0.7);
+        });
+      }, 600);
     } else {
-      spawnBurst({ x: sizeRef.current.w / 2, y: sizeRef.current.h * 0.4 }, 140, 0x98d4ff, true, 1.4);
+      spawnBurst({ x: sizeRef.current.w / 2, y: sizeRef.current.h * 0.4 }, 180, 0x98d4ff, true, 1.6);
+      setTimeout(() => {
+        spawnBurst({ x: sizeRef.current.w / 2, y: sizeRef.current.h * 0.4 }, 100, 0xffd700, false, 1.0);
+      }, 550);
     }
     spawnAsh(starsRect, 1);
-    return new Promise<void>(res => setTimeout(res, 900));
+    return new Promise<void>(res => setTimeout(res, 1050));
   };
 
   useImperativeHandle(ref, () => ({ playIntro, playSingleReroll, playTotalReroll }));
