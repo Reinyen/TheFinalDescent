@@ -704,7 +704,7 @@ class SceneManager {
       new THREE.Vector2(window.innerWidth, window.innerHeight),
       1.5, // strength
       0.4, // radius
-      0.85 // threshold
+      0.95 // threshold - increased to prevent stars from blooming
     );
     this.composer.addPass(this.bloomPass);
 
@@ -775,12 +775,12 @@ class SceneManager {
     starGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
     const starMaterial = new THREE.PointsMaterial({
-      size: 0.25, // Reduced from 0.5 to 0.25 for smaller, more realistic stars
+      size: 0.15, // Further reduced for crisp, realistic stars
       vertexColors: true,
       transparent: true,
-      opacity: 1,
+      opacity: 0.9, // Slightly reduced to prevent bloom
       sizeAttenuation: true,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending, // Changed from Additive to Normal for crisp stars
     });
 
     this.starfield = new THREE.Points(starGeometry, starMaterial);
@@ -921,12 +921,14 @@ class SceneManager {
   createShatteredGlass() {
     console.log('Creating reality crack effect around crash site');
 
-    // Create a SINGLE large plane covering the crater area
-    // This will use procedural shader to generate crack patterns
+    // Create a FULLSCREEN plane that covers the entire viewport
+    // This ensures the crack effect is visible across the whole screen
     const impactPoint = new THREE.Vector3(0, -5, 5);
-    const effectRadius = 50; // Large radius to cover crater and button area
 
-    // Create circular plane geometry
+    // Make it MUCH larger to cover entire screen from this distance
+    const effectRadius = 200; // Massive radius to ensure fullscreen coverage
+
+    // Create large plane geometry
     const geometry = new THREE.PlaneGeometry(effectRadius * 2, effectRadius * 2, 1, 1);
 
     const material = new THREE.ShaderMaterial({
@@ -943,12 +945,14 @@ class SceneManager {
       transparent: false,
       depthWrite: false,
       depthTest: false,
+      side: THREE.DoubleSide, // Render both sides to ensure visibility
     });
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.copy(impactPoint);
     mesh.rotation.x = -Math.PI / 2;
     mesh.visible = false;
+    mesh.renderOrder = 999; // Render last to ensure it's on top
     mesh.userData.targetIntensity = 1.0;
 
     this.shardsMeshes.push(mesh);
@@ -1161,6 +1165,24 @@ class SceneManager {
 
     // Crater phase - maintain the eerie glow and shard animation
     if (this.timeline.phase === 'crater') {
+      // Subtle star twinkling effect
+      if (this.starfield) {
+        const sizes = this.starfield.geometry.attributes.size.array as Float32Array;
+        const starCount = sizes.length;
+
+        for (let i = 0; i < starCount; i++) {
+          // Each star twinkles at different rate based on its index
+          const twinkleSpeed = 2.0 + (i % 100) * 0.05;
+          const twinkle = Math.sin(this.timeline.time * twinkleSpeed + i) * 0.15 + 0.85;
+
+          // Apply twinkle to size (subtle variation)
+          const baseSize = Math.random() * 0.6 + 0.2;
+          sizes[i] = baseSize * twinkle;
+        }
+
+        this.starfield.geometry.attributes.size.needsUpdate = true;
+      }
+
       if (this.craterGlow) {
         const pulse = Math.sin(this.timeline.time * 2) * 0.2 + 0.9;
         this.craterGlow.scale.set(pulse, pulse, 1);
