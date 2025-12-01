@@ -60,7 +60,7 @@ function Starfield() {
   return (
     <points ref={starsRef} geometry={geometry}>
       <pointsMaterial
-        size={0.15}
+        size={0.4}
         vertexColors
         transparent
         opacity={1}
@@ -79,9 +79,11 @@ function Meteor({ onImpact }: { onImpact: () => void }) {
   const startTime = useRef(0);
 
   useEffect(() => {
+    console.log('Meteor component mounted, will activate in 2 seconds');
     const timer = setTimeout(() => {
+      console.log('Meteor activated!');
       setActive(true);
-      startTime.current = Date.now() / 1000;
+      startTime.current = performance.now() / 1000;
     }, 2000);
     return () => clearTimeout(timer);
   }, []);
@@ -89,13 +91,14 @@ function Meteor({ onImpact }: { onImpact: () => void }) {
   useFrame((state) => {
     if (!active || !meteorRef.current) return;
 
-    const elapsed = state.clock.getElapsedTime() - startTime.current;
-    const speed = 0.3;
+    const elapsed = (performance.now() / 1000) - startTime.current;
+    const speed = 8; // Much faster and more visible
 
-    meteorRef.current.position.y = 30 - elapsed * speed * 60;
+    meteorRef.current.position.y = 30 - elapsed * speed;
 
     // Impact detection
     if (meteorRef.current.position.y < -15) {
+      console.log('METEOR IMPACT!');
       setActive(false);
       onImpact();
     }
@@ -124,30 +127,30 @@ function Meteor({ onImpact }: { onImpact: () => void }) {
 
   return (
     <group ref={meteorRef} position={[0, 30, 0]}>
-      {/* Meteor core */}
+      {/* Meteor core - MUCH LARGER */}
       <mesh>
-        <sphereGeometry args={[0.5, 16, 16]} />
+        <sphereGeometry args={[2, 32, 32]} />
         <meshBasicMaterial color="#ffffff" />
       </mesh>
 
       {/* Meteor glow */}
       <mesh>
-        <sphereGeometry args={[1.5, 16, 16]} />
+        <sphereGeometry args={[4, 32, 32]} />
         <meshBasicMaterial
           color="#ffaa44"
           transparent
-          opacity={0.6}
+          opacity={0.8}
           blending={THREE.AdditiveBlending}
         />
       </mesh>
 
       {/* Outer glow */}
       <mesh>
-        <sphereGeometry args={[2.5, 16, 16]} />
+        <sphereGeometry args={[6, 32, 32]} />
         <meshBasicMaterial
           color="#ff6622"
           transparent
-          opacity={0.3}
+          opacity={0.5}
           blending={THREE.AdditiveBlending}
         />
       </mesh>
@@ -550,8 +553,15 @@ export function IntroScreen({ onBegin }: { onBegin: () => void }) {
   const nextGlitchRef = useRef(0);
 
   const handleImpact = () => {
-    setTimeout(() => setShowTitle(true), 1500);
-    setTimeout(() => setShowButton(true), 3000);
+    console.log('handleImpact called - showing title and button');
+    setTimeout(() => {
+      console.log('Showing title');
+      setShowTitle(true);
+    }, 1500);
+    setTimeout(() => {
+      console.log('Showing button');
+      setShowButton(true);
+    }, 3000);
   };
 
   useEffect(() => {
