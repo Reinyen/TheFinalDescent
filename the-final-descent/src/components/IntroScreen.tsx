@@ -703,7 +703,7 @@ class SceneManager {
 
   createImpactEffects() {
     console.log('Creating impact effects');
-    const impactPoint = new THREE.Vector3(0, -20, -170);
+    const impactPoint = new THREE.Vector3(0, -5, 5);
 
     // Massive explosion burst with debris
     const debrisVelocity = new THREE.Vector3(0, 0, 0);
@@ -760,9 +760,9 @@ class SceneManager {
   createShatteredGlass() {
     console.log('Creating shattered glass effect around crash site');
 
-    // Create shards ONLY around impact point (0, -20, -170)
+    // Create shards ONLY around impact point (0, -5, 5)
     // Positioned to frame the "Begin the Descent" button area
-    const impactPoint = new THREE.Vector3(0, -20, -170);
+    const impactPoint = new THREE.Vector3(0, -5, 5);
     const shardCount = 40;
 
     // Create shards in expanding rings with gradient fade
@@ -851,10 +851,10 @@ class SceneManager {
       // Using quadratic ease-in for acceleration effect
       const progress = linearProgress * linearProgress;
 
-      // 60-degree angle trajectory - falls toward viewer, lands far in distance
-      // Camera at (0, 0, 30), impact ~170 units away at (0, -20, -170)
-      const startPos = new THREE.Vector3(0, 100, -200);
-      const endPos = new THREE.Vector3(0, -20, -170);
+      // 60-degree angle trajectory - falls toward viewer at 60-degree angle
+      // Camera at (0, 0, 30), impact point visible in front of camera
+      const startPos = new THREE.Vector3(0, 150, -100);
+      const endPos = new THREE.Vector3(0, -5, 5);
 
       this.meteorMesh.position.lerpVectors(startPos, endPos, progress);
       this.meteorMesh.rotation.x += deltaTime * 2.5;
